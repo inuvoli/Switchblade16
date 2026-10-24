@@ -45,8 +45,6 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 
 ## Hardware Specifications
 
-### Hardware
-
 | Component | Part Number | Function |
 |-----------|-------------|----------|
 | CPU | 80C31 | 8051-compatible microcontroller |
@@ -60,12 +58,12 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 ### Signal Path
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│ 8× CD74HC   │    │ 16× MP7529B  │    │ 8× CD74HC   │
-│ HC22106     │───▶│ DAC Chips    │───▶│ HC22106     │
-│ Input Mat.  │    │ (Gain/Layer) │    │ Output Mat. │
-└─────────────┘    └──────────────┘    └─────────────┘
-     (16→16)            (per-link)          (16→16)
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│ 8 × CD74HC  │     │ 16 × MP7529B │     │ 8 × CD74HC  │
+│ 22106       │ ──> │ DAC Chips    │ ──> │ 22106       │
+│ Input Mat.  │     │ (Gain/Layer) │     │ Output Mat. │
+└─────────────┘     └──────────────┘     └─────────────┘
+     (16→16)           (per-link)            (16→16)
 ```
 
 ### Memory Configuration
@@ -76,6 +74,28 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 | **EEPROM** | 8 KB | 0x8000–0x9FFF | Parallel, DATA# polling |
 | **RAM** | 512 B | 0x7E00–0x7FFF | External SRAM |
 | **Internal RAM** | 128 B | 0x00–0x7F | 80C31 internal |
+
+---
+
+## Memory Map
+
+### External Data Space
+
+```
+0x0000 ┌─────────────────┐
+       │   NOT USED      │ 
+0x1E00 ├─────────────────┤
+       │   I/O Registers │ (LCD, LED, DAC, Matrix, ..)
+0x3E00 ├─────────────────┤
+       │   NOT USED      │ 
+0x7E00 ├─────────────────┤
+       │   External RAM  │ (512 bytes)
+0x7FFF ├─────────────────┤
+       │   EEPROM        │ (8 KB, presets + config)
+0x9FFF ├─────────────────┤
+       │   NOT USED      │ 
+0xFFFF └─────────────────┘
+```
 
 ### I/O Address Map
 
@@ -88,24 +108,6 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 | 0x2E00 / 0x3600 | DACs | MP7529B chips (links 16–31 / 0–15) |
 | 0x3A00–0x3BFF | Output Matrix | 8 × CD74HC22106 |
 | 0x3C00–0x3DFF | Input Matrix | 8 × CD74HC22106 |
-
----
-
-## Memory Map
-
-### External Data Space
-
-```
-0x0000 ┌─────────────────┐
-       │   Code ROM      │
-0x7E00 ├─────────────────┤
-       │   External RAM  │ (512 bytes)
-0x7FFF ├─────────────────┤
-       │   EEPROM        │ (8 KB, presets + config)
-0x9FFF ├─────────────────┤
-       │   I/O Registers │ (LCD, DACs, Matrices)
-0xFFFF └─────────────────┘
-```
 
 ### EEPROM Layout
 
