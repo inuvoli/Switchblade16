@@ -11,14 +11,14 @@ A complete technical documentation of the **SoundSculpture SwitchBlade 16** audi
 
 - [Overview](#overview)
 - [Hardware Specifications](#hardware-specifications)
-- [Project Structure](#project-structure)
-- [Building the Firmware](#building-the-firmware)
 - [Memory Map](#memory-map)
 - [MIDI Implementation](#midi-implementation)
 - [Preset Structure](#preset-structure)
 - [Gain Engine](#gain-engine)
 - [LCD Interface](#lcd-interface)
 - [Tools & Resources](#tools--resources)
+- [Project Structure](#project-structure)
+- [Building the Firmware](#building-the-firmware)
 - [Disclaimer](#disclaimer)
 
 ---
@@ -45,6 +45,18 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 
 ## Hardware Specifications
 
+### Hardware
+
+| Component | Part Number | Function |
+|-----------|-------------|----------|
+| CPU | 80C31 | 8051-compatible microcontroller |
+| ROM | 27C256 | 32 KB EPROM (Firmware) |
+| EEPROM | AT28PC64 | 8KB EEPROM (Presets) |
+| RAM | UM6116-2 | 2KB RAM (External RAM, only 512B ssable)|
+| DAC | MP7529B | 8-bit multiplying DAC (×16) |
+| Matrix | CD74HC22106 | 8×8 analog crosspoint (×16) |
+| LCD | HD44780-compatible | 20×2 character display |
+
 ### Signal Path
 
 ```
@@ -60,7 +72,7 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 
 | Component | Size | Address Range | Notes |
 |-----------|------|---------------|-------|
-| **Code ROM** | 32 KB | 0x0000–0x7FFF | 27C256, code ends at 0x3948 |
+| **Code ROM** | 32 KB | 0x0000–0x7FFF | 27C256, original FW code ends at 0x3948 |
 | **EEPROM** | 8 KB | 0x8000–0x9FFF | Parallel, DATA# polling |
 | **RAM** | 512 B | 0x7E00–0x7FFF | External SRAM |
 | **Internal RAM** | 128 B | 0x00–0x7F | 80C31 internal |
@@ -72,72 +84,10 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 | 0x1E00–0x1E02 | LCD | Command / Data / Busy |
 | 0x1E08–0x1E0F | Relay Latches | 8 relay outputs |
 | 0x1E10–0x1E12 | LEDs | PRG / PLAY / CNT indicators |
-| 0x1E18 | SBSR | Output buffer, Vref, input pad control |
+| 0x1E18 | SBSR | Status Register. Control Output buffer mute, Vref value, input pad control |
 | 0x2E00 / 0x3600 | DACs | MP7529B chips (links 16–31 / 0–15) |
-| 0x3A00–0x3BFF | Output Matrix | 8× CD74HC22106 |
-| 0x3C00–0x3DFF | Input Matrix | 8× CD74HC22106 |
-
----
-
-## Project Structure
-
-```
-switchblade16-firmware/
-├── README.md                 # This file
-├── FIRMWARE.md               # Complete technical documentation
-├── build.cmd                 # Windows build script (SDCC)
-├── build.sh                  # Linux build script (SDCC)
-├── src/
-│   └── sb16_3.00.c          # Reconstructed C source
-├── bin/                      # Compiled output (.bin, .hex)
-├── build/                    # Intermediate build files
-└── docs/
-    ├── Memory Map.xlsx       # Address mapping reference
-    └── Preset EEPROM Structure.xlsx
-```
-
----
-
-## Building the Firmware
-
-### Prerequisites
-
-- **SDCC** (Small Device C Compiler) ≥ 4.0
-- **packihx** and **makebin** (included with SDCC)
-
-### Windows
-
-```cmd
-build.cmd
-```
-
-### Linux
-
-```bash
-chmod +x build.sh
-./build.sh
-```
-
-### Build Output
-
-| File | Location | Description |
-|------|----------|-------------|
-| `sb16_3.00.ihx` | `build/` | Intel HEX (raw compiler output) |
-| `sb16_3.00.hex` | `build/` | Intel HEX (packed, programmer-ready) |
-| `sb16_3.00.bin` | `bin/` | Binary image (32 KB, padded) |
-
-### Compiler Flags
-
-```bash
-sdcc -mmcs51 --model-small      --iram-size 128      --xram-loc 0x7E00      --xram-size 0x200      --code-size 0x8000      -o build/ ./src/sb16_3.00.c
-```
-
-| Flag | Value | Purpose |
-|------|-------|---------|
-| `--iram-size` | 128 | Internal RAM (standard 8051) |
-| `--xram-loc` | 0x7E00 | External RAM start address |
-| `--xram-size` | 0x200 | External RAM size (512 bytes) |
-| `--code-size` | 0x8000 | Code memory size (32 KB) |
+| 0x3A00–0x3BFF | Output Matrix | 8 × CD74HC22106 |
+| 0x3C00–0x3DFF | Input Matrix | 8 × CD74HC22106 |
 
 ---
 
@@ -168,7 +118,7 @@ sdcc -mmcs51 --model-small      --iram-size 128      --xram-loc 0x7E00      --xr
 | 0x9E20 | SwitchBlade MIDI channel |
 | 0x9E21 | Preset switch time (crossfade) |
 | 0x9E25/0x9E26 | CTR0 / CTR1 CC numbers |
-| 0x9E30+ | Preset manager table (20 banks × 10) |
+| 0x9E30+ | Banks Configuration (20 banks with max 10 Presets each) |
 
 ---
 
@@ -299,7 +249,7 @@ result = dac_value(0xD9, 128)  # Returns ~0x50 (midpoint)
 | 0 | Off | Controllers set static positions |
 | 1 | Smooth | Timer-driven triangle wave (CTR1 sweeps 0↔255) |
 | 2 | Multi-pan | Complex multi-link morphing pattern |
-| 3 | Polled | Main-loop sweep (less precise timing) |
+| 3 | NOT USED | this option seems to point to a pitch detect function but it is never called |
 
 ---
 
@@ -350,37 +300,62 @@ lcd_write_cmd(0x06);  // Entry mode: increment, no shift
 │ -12dB    00dB      │
 └────────────────────┘
 ```
+## Project Structure
+
+```
+switchblade16-firmware/
+├── README.md                 # This file
+├── build.cmd                 # Windows build script (SDCC)
+├── build.sh                  # Linux build script (SDCC)
+├── src/
+│   └── sb16_3.00.c          # Reconstructed C source
+├── bin/                      # Compiled output (.bin, .hex)
+├── build/                    # Intermediate build files
+
+```
 
 ---
 
-## Tools & Resources
+## Building the Firmware
 
-### Software
+### Prerequisites
 
-| Tool | Purpose |
-|------|---------|
-| **Ghidra** | Disassembly and decompilation (8051 processor module) |
-| **SDCC** | Small Device C Compiler (reconstruction) |
-| **packihx** | Intel HEX packing |
-| **makebin** | HEX to binary conversion |
+- **SDCC** (Small Device C Compiler) ≥ 4.0
+- **packihx** and **makebin** (included with SDCC)
 
-### Hardware
+### Windows
 
-| Component | Part Number | Function |
-|-----------|-------------|----------|
-| CPU | 80C31 | 8051-compatible microcontroller |
-| ROM | 27C256 | 32 KB EPROM (firmware) |
-| EEPROM | Parallel 8 KB | Preset storage |
-| DAC | MP7529B | 8-bit multiplying DAC (×16) |
-| Matrix | CD74HC22106 | 8×8 analog crosspoint (×16) |
-| LCD | HD44780-compatible | 20×2 character display |
+```cmd
+build.cmd
+```
 
-### Documentation
+### Linux
 
-- `FIRMWARE.md` — Complete technical documentation
-- `Memory Map.xlsx` — Address mapping reference
-- `Preset EEPROM Structure.xlsx` — Preset data layout
-- `sbglmanu.pdf` — SwitchBlade GL Users Guide v6.19 (for feature reference)
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+### Build Output
+
+| File | Location | Description |
+|------|----------|-------------|
+| `sb16_3.00.ihx` | `build/` | Intel HEX (raw compiler output) |
+| `sb16_3.00.hex` | `build/` | Intel HEX (packed, programmer-ready) |
+| `sb16_3.00.bin` | `bin/` | Binary image (32 KB, padded) |
+
+### Compiler Flags
+
+```bash
+sdcc -mmcs51 --model-small      --iram-size 128      --xram-loc 0x7E00      --xram-size 0x200      --code-size 0x8000      -o build/ ./src/sb16_3.00.c
+```
+
+| Flag | Value | Purpose |
+|------|-------|---------|
+| `--iram-size` | 128 | Internal RAM (standard 8051) |
+| `--xram-loc` | 0x7E00 | External RAM start address |
+| `--xram-size` | 0x200 | External RAM size (512 bytes) |
+| `--code-size` | 0x8000 | Code memory size (32 KB) |
 
 ---
 
@@ -414,6 +389,6 @@ This documentation is released under the [MIT License](LICENSE).
 
 ---
 
-**Repository:** [github.com/yourusername/switchblade16-firmware](https://github.com/yourusername/switchblade16-firmware)  
+**Repository:** [github.com/inuvoli/Switchblade16](https://github.com/inuvoli/Switchblade16)  
 **Last Updated:** 2024
 

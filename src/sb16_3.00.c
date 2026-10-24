@@ -29,7 +29,7 @@
 #define XB(addr)  (*(__xdata volatile uint8_t *)(addr))
 
 /* ============================================================================
- * MEMORY-MAPPED HARDWARE REGISTERS
+ * MEMORY-MAPPED HARDWARE REGISTERS AND HELPER MACROS
  * ============================================================================ */
 
 /* --- LCD Display (HD44780 compatible, 20 characters x 2 rows) --- */
@@ -41,8 +41,8 @@
 #define LED_PRG     0x1E10u    /**< PROGRAM mode indicator */
 #define LED_PLAY    0x1E11u    /**< PLAY mode indicator */
 #define LED_CNT     0x1E12u    /**< Continuous controller indicator */
-#define LED_ON      0x00u      /**< LED ON value (active low) */
-#define LED_OFF     0xFFu      /**< LED OFF value (active low) */
+#define LED_ON      0x00u      /**< LED ON value */
+#define LED_OFF     0xFFu      /**< LED OFF value */
 
 /* --- Relay Control (8 latching relays, one per output) --- */
 #define RELAY_BASE  0x1E08u    /**< Base address for 8 relay latches */
