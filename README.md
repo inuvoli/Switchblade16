@@ -7,7 +7,7 @@ A complete technical documentation of the **SoundSculpture SwitchBlade 16** audi
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Hardware Specifications](#hardware-specifications)
@@ -15,8 +15,6 @@ A complete technical documentation of the **SoundSculpture SwitchBlade 16** audi
 - [MIDI Implementation](#midi-implementation)
 - [Preset Structure](#preset-structure)
 - [Gain Engine](#gain-engine)
-- [LCD Interface](#lcd-interface)
-- [Tools & Resources](#tools--resources)
 - [Project Structure](#project-structure)
 - [Building the Firmware](#building-the-firmware)
 - [Disclaimer](#disclaimer)
@@ -105,7 +103,7 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 | 0x1E08–0x1E0F | Relay Latches | 8 relay outputs |
 | 0x1E10–0x1E12 | LEDs | PRG / PLAY / CNT indicators |
 | 0x1E18 | SBSR | Status Register. Control Output buffer mute, Vref value, input pad control |
-| 0x2E00 / 0x3600 | DACs | MP7529B chips (links 16–31 / 0–15) |
+| 0x2E00 / 0x3600 | DACs | 16 x MP7529B chips (links 16–31 / 0–15) |
 | 0x3A00–0x3BFF | Output Matrix | 8 × CD74HC22106 |
 | 0x3C00–0x3DFF | Input Matrix | 8 × CD74HC22106 |
 
@@ -251,66 +249,18 @@ result = dac_value(0xD9, 128)  # Returns ~0x50 (midpoint)
 | 0 | Off | Controllers set static positions |
 | 1 | Smooth | Timer-driven triangle wave (CTR1 sweeps 0↔255) |
 | 2 | Multi-pan | Complex multi-link morphing pattern |
-| 3 | NOT USED | this option seems to point to a pitch detect function but it is never called |
 
 ---
 
-## LCD Interface
-
-### Initialization Sequence
-
-```c
-// HD44780-compatible, 20×2 display
-lcd_write_cmd(0x30);  // Function set (×3 for reliability)
-lcd_write_cmd(0x30);
-lcd_write_cmd(0x30);
-lcd_write_cmd(0x38);  // 2-line, 5×7 dots
-lcd_write_cmd(0x0C);  // Display on, cursor off
-lcd_write_cmd(0x01);  // Clear display
-lcd_write_cmd(0x06);  // Entry mode: increment, no shift
-```
-
-### Display Addresses
-
-| Line | DDRAM Address |
-|------|---------------|
-| Line 1 | 0x80 |
-| Line 2 | 0xC0 |
-
-### Screen Examples
-
-**Play Mode:**
-```
-┌────────────────────┐
-│ SELECT PRESET  01  │
-│ NONAMEYET 01       │
-└────────────────────┘
-```
-
-**Programming Mode:**
-```
-┌────────────────────┐
-│ PROGRAMMING        │
-│ PRESET NAME        │
-└────────────────────┘
-```
-
-**Patch Editor:**
-```
-┌────────────────────┐
-│ IN03 -> OUT07      │
-│ -12dB    00dB      │
-└────────────────────┘
-```
 ## Project Structure
 
 ```
-switchblade16-firmware/
+Switchblade16/
 ├── README.md                 # This file
 ├── build.cmd                 # Windows build script (SDCC)
 ├── build.sh                  # Linux build script (SDCC)
 ├── src/
-│   └── sb16_3.00.c          # Reconstructed C source
+│   └── sb16_3.00.c           # Reconstructed C source
 ├── bin/                      # Compiled output (.bin, .hex)
 ├── build/                    # Intermediate build files
 
@@ -363,7 +313,7 @@ sdcc -mmcs51 --model-small      --iram-size 128      --xram-loc 0x7E00      --xr
 
 ## Disclaimer
 
-⚠️ **This project is for educational and preservation purposes only.**
+**This project is for educational and preservation purposes only.**
 
 - The original firmware is copyrighted by SoundSculpture.
 - This documentation is derived from reverse engineering and may contain inaccuracies.
