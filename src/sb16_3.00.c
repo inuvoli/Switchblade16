@@ -3,9 +3,9 @@
  * SOUNDSCULPTURE SWITCHBLADE 16 - MIDI AUDIO MATRIX SWITCHER FIRMWARE
  * ============================================================================
  * 
- * Author:		    Ivan Nuvoli (Nuvoli Custom Audio)
- * Date:		    2024-06-15
- * Version:	        2.0.1
+ * Author:          Ivan Nuvoli (Nuvoli Custom Audio)
+ * Date:            2024-06-15
+ * Version:         2.0.1
  * 
  * Target Hardware: 80C31 (MCS-51 family) @ 12 MHz
  * Compiler:        SDCC (Small Device C Compiler)
@@ -33,9 +33,15 @@
  * ============================================================================ */
 
 /* --- LCD Display (HD44780 compatible, 20 characters x 2 rows) --- */
-#define LCD_CMD     0x1E00u    /**< LCD command register (write) */
-#define LCD_DATA    0x1E01u    /**< LCD data register (read/write) */
-#define LCD_STAT    0x1E02u    /**< LCD status register (read: D7 = busy flag) */
+#define LCD_CMD     0x1E00u    /**< LCD command register (write), mirror 0x1E04 */
+#define LCD_DATA    0x1E01u    /**< LCD data register (write), mirror 0x1E05 */
+#define LCD_STAT    0x1E02u    /**< LCD status register (read: D7 = busy flag), mirror 0x1E06 */
+#define LCD_READ    0X1E03u    /**< LCD data register (read) - NEVER USED, mirror 0x1E07 */
+
+/* --- Relay Control (8 latching relays, one per output) --- */
+#define RELAY_BASE  0x1E08u    /**< Base address for 8 relay latches */
+#define RELAY_OPEN  0x00       /**< Relay Status: Close = 0 */ 
+#define RELAY_CLOSE 0x01       /**< Relay Status: Open = 0 */ 
 
 /* --- Front Panel LEDs (active low: 0 = ON, 0xFF = OFF) --- */
 #define LED_PRG     0x1E10u    /**< PROGRAM mode indicator */
@@ -43,11 +49,6 @@
 #define LED_CNT     0x1E12u    /**< Continuous controller indicator */
 #define LED_ON      0x00u      /**< LED ON value */
 #define LED_OFF     0xFFu      /**< LED OFF value */
-
-/* --- Relay Control (8 latching relays, one per output) --- */
-#define RELAY_BASE  0x1E08u    /**< Base address for 8 relay latches */
-#define RELAY_OPEN  0x00       /**< Relay Status: Close = 0 */ 
-#define RELAY_CLOSE 0x01       /**< Relay Status: Open = 0 */ 
 
 /* --- Audio Level Monitor Circuitry (Select which input is compared with the reference voltage set by SBSR.4 --- */
 #define MON_A0      0x1E13u    /**< Level-monitor mux address (bit1) */
@@ -79,15 +80,6 @@
 #define EE_BASE     0x8000u    /**< EEPROM base address */
 
 /* ============================================================================
- * PORT 3 CONTROL LINES (Bit-addressable I/O)
- * ============================================================================ */
-#define DAC_AB_SELECT   P3_2       /**< Selects DAC channel A/B */
-#define OUT_MUTE        P3_3       /**< Output buffer mute control (Ouput selected by SBSR.0-SBSR.3: 0 = Muted, 1 = All Active) */
-#define MX_WR_ENABLE    P3_4       /**< Matrix Write Enable (active low) */
-#define DAC_WR_ENABLE   P3_5       /**< DAC Write Enable (active high) */
-#define MON_IN_STATE    P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
-
-/* ============================================================================
  * PORT 1 - Front Panel Controls (all inputs, active low)
  * ============================================================================ */
 #define KEY_MODE      (1u << 4)
@@ -98,6 +90,15 @@
 #define KEY_RELEASED  0u
 
 /* ============================================================================
+ * PORT 3 CONTROL LINES (Bit-addressable I/O)
+ * ============================================================================ */
+#define DAC_AB_SELECT   P3_2       /**< Selects DAC channel A/B */
+#define OUT_MUTE        P3_3       /**< Output buffer mute control (Ouput selected by SBSR.0-SBSR.3: 0 = Muted, 1 = All Active) */
+#define MX_WR_ENABLE    P3_4       /**< Matrix Write Enable (active low) */
+#define DAC_WR_ENABLE   P3_5       /**< DAC Write Enable (active high) */
+#define MON_IN_STATE    P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
+
+/* ============================================================================
  * EEPROM MEMORY LAYOUT
  * ============================================================================ */
 #define NUM_PRESETS     75u
@@ -105,13 +106,21 @@
 #define MAX_BANKS       20u
 
 /* Preset fields offsets */
-#define REC_LINKS       0x00u    /**< [64 byte] 32 x {attenuation (1 byte), routing (1 byte)} */
-                                 /**< attenuation: bit0..3 set set input attenuation, bit4..7 set output attenuation                   */
-                                 /**< ------------------------------------------------------------------------------------------------ */
-								 /**< | 0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  | 10  | 11  | 12  | 13  | 14  | 15  | */
-                                 /**< |OFF |-42dB|-36dB|-30dB|-27dB|-24dB|-21dB|-18dB|-15dB|-12dB| -9dB| -6dB| -3dB|  0dB| +3dB| +6dB| */
-                                 /**< ------------------------------------------------------------------------------------------------ */
-                                 /**< routing:     bit0..3 set input number (0..15) , bit4..7 set output number (0..15)                */
+#define REC_LINKS       0x00u    
+/**< [64 byte] 32 x {attenuation (1 byte), routing (1 byte)} */
+/**<              ------------------------------------------------*/
+/**<              | 0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  | */
+/**<              ------------------------------------------------ */
+/**< 0x00, att:   |     up attenuation   |  down attenuation     | */
+/**<b.            ------------------------------------------------ */
+/**< 0x01, route: |     output number    |  input number         | */
+/**<              ------------------------------------------------ */
+
+/**< attenuation is mapped to these 16 values:                                                        */
+/**< ------------------------------------------------------------------------------------------------ */
+/**< | 0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  | 10  | 11  | 12  | 13  | 14  | 15  | */
+/**< |OFF |-42dB|-36dB|-30dB|-27dB|-24dB|-21dB|-18dB|-15dB|-12dB| -9dB| -6dB| -3dB|  0dB| +3dB| +6dB| */
+/**< ------------------------------------------------------------------------------------------------ */
 
 #define REC_RELAY       0x40u    /**< [1 byte]  Relay states (8 bits), each relay is mapped on a single bit. 0 = Open, 1 = Closed. bit0 = RLY1, bit7 = RLY8 */
 #define REC_PC          0x41u    /**< [16 byte] Program Change numbers (0..127), one byte for each output device */
@@ -188,11 +197,15 @@ static __xdata uint8_t pagebuf[32];           /**< EEPROM page buffer */
 /* Interrupt-Shared Variables (must be volatile) */
 static volatile __data uint8_t pos0;          /**< Sweep position 0 */
 static volatile __data uint8_t pos1;          /**< Sweep position 1 */
-static volatile __data uint8_t pc_value;      /**< Pending MIDI PC value */
+static volatile __data uint8_t pc_value;      /**< MIDI Pending PC value */
 static volatile __data uint8_t sweep_sd;      /**< Sweep timer reload */
-static volatile __bit pc_pending;             /**< PC pending flag */
-static volatile __bit pos_dirty;              /**< Position changed flag */
-static volatile __bit sweep_up;               /**< Sweep direction */
+static volatile __bit  pc_pending;            /**< MIDI PC pending flag */
+static volatile __bit  pos_dirty;             /**< Position changed flag */
+static volatile __bit  sweep_up;              /**< Sweep direction */
+static          __bit  relay_pulse;           /**< Relay pulse active */
+static          __bit  have_d1;               /**< MIDI data byte 1 received */
+static          __data uint8_t m_status;      /**< MIDI status byte */
+static          __data uint8_t m_d1;          /**< MIDI first data byte */
 
 /* Multi-pan (sweep mode 2): four independent triangle LFOs, channel = route & 3 */
 static volatile __data uint8_t  pan_pos[4];   /**< Pan positions */
@@ -200,11 +213,7 @@ static volatile __data uint8_t  pan_dir;      /**< Direction bits, 1 = rising */
 static volatile __data uint8_t  pan_exp;      /**< Channels whose period expired  */
 static volatile __data uint16_t pan_cnt[4];   /**< Remaining ticks per channel */
 static volatile __data uint16_t pan_last;     /**< Last programmed interval */
-static __data uint16_t          pan_per;      /**< Base period P */
-static __bit             relay_pulse;         /**< Relay pulse active */
-static __bit             have_d1;             /**< MIDI data byte 1 received */
-static __data uint8_t    m_status;            /**< MIDI status byte */
-static __data uint8_t    m_d1;                /**< MIDI first data byte */
+static          __data uint16_t pan_per;      /**< Base period P */
 
 /* Programming Mode Buffer */
 /* Remote mode: tables share blkbuf (the programming menu is never active
