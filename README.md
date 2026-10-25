@@ -48,7 +48,7 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 | CPU | 80C31 | 8051-compatible microcontroller |
 | ROM | 27C256 | 32 KB EPROM (Firmware) |
 | EEPROM | AT28PC64 | 8KB EEPROM (Presets) |
-| RAM | UM6116-2 | 2KB RAM (External RAM, only 512B ssable)|
+| RAM | UM6116-2 | 2KB RAM (External RAM, only 512B usable)|
 | DAC | MP7529B | 8-bit multiplying DAC (×16) |
 | Matrix | CD74HC22106 | 8×8 analog crosspoint (×16) |
 | LCD | HD44780-compatible | 20×2 character display |
