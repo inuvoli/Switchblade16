@@ -123,10 +123,12 @@
 /**< |OFF |-42dB|-36dB|-30dB|-27dB|-24dB|-21dB|-18dB|-15dB|-12dB| -9dB| -6dB| -3dB|  0dB| +3dB| +6dB| */
 /**< ------------------------------------------------------------------------------------------------ */
 
-#define REC_RELAY       0x40u    /**< [1 byte]  Relay states (8 bits), each relay is mapped on a single bit. 0 = Open, 1 = Closed. bit0 = RLY1, bit7 = RLY8 */
+#define REC_RELAY       0x40u    /**< [1 byte]  Relay states (8 bits), each relay is mapped on a single bit. */
+                                 /**<           0 = Open, 1 = Closed. bit0 = RLY1, bit7 = RLY8 */
 #define REC_PC          0x41u    /**< [16 byte] Program Change numbers (0..127), one byte for each output device */
 #define REC_NAME        0x51u    /**< [12 byte] Preset name (12 characters) */
-#define REC_SWEEPDELAY  0x5Du    /**< [1 byte]  Preset Sweep delay value, from 250ms to 12950ms in 50ms step [0x01 = 250ms, 0xff = 12950ms] */
+#define REC_SWEEPDELAY  0x5Du    /**< [1 byte]  Preset Sweep delay value, from 250ms to 12950ms in 50ms step. */
+                                 /**<           [0x01 = 250ms, 0xff = 12950ms] */
 #define REC_SWEEPMODE   0x5Eu    /**< [1 byte]  Sweep mode: 0=off, 1=smooth, 2=multi-pan */
 #define REC_CTRMASK     0x5Fu    /**< [4 byte]  bit mask for CTR1-controlled links (INFERRED)*/
 
