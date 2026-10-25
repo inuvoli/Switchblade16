@@ -38,24 +38,24 @@
 #define LCD_STAT    0x1E02u    /**< LCD status register (read: D7 = busy flag), mirror 0x1E06 */
 #define LCD_READ    0X1E03u    /**< LCD data register (read) - NEVER USED, mirror 0x1E07 */
 
-/* --- Relay Control (8 latching relays, one per output) --- */
+/* --- Relay Control (8 latching relays) --- */
 #define RELAY_BASE  0x1E08u    /**< Base address for 8 relay latches */
 #define RELAY_OPEN  0x00       /**< Relay Status: Close = 0 */ 
-#define RELAY_CLOSE 0x01       /**< Relay Status: Open = 0 */ 
+#define RELAY_CLOSE 0x01       /**< Relay Status: Open = 1 */ 
 
-/* --- Front Panel LEDs (active low: 0 = ON, 0xFF = OFF) --- */
+/* --- Front Panel LEDs --- */
 #define LED_PRG     0x1E10u    /**< PROGRAM mode indicator */
 #define LED_PLAY    0x1E11u    /**< PLAY mode indicator */
 #define LED_CNT     0x1E12u    /**< Continuous controller indicator */
 #define LED_ON      0x00u      /**< LED ON value */
 #define LED_OFF     0xFFu      /**< LED OFF value */
 
-/* --- Audio Level Monitor Circuitry (Select which input is compared with the reference voltage set by SBSR.4 --- */
+/* --- Audio Level Monitor Circuitry (Select which input is compared with the reference voltage set by SBSR.4) --- */
 #define MON_A0      0x1E13u    /**< Level-monitor mux address (bit1) */
 #define MON_A1      0x1E14u    /**< Level-monitor mux address (bit2) */
 #define MON_A2      0x1E15u    /**< Level-monitor mux address (bit3) */
-#define MON_EN0     0x1E16u    /**< Monitor enable channel 0-7  --- Active Low*/
-#define MON_EN1     0x1E17u    /**< Monitor enable channel 8-15 --- Active Low */
+#define MON_EN0     0x1E16u    /**< Monitor enable inputs 0-7  --- Active Low*/
+#define MON_EN1     0x1E17u    /**< Monitor enable inputs 8-15 --- Active Low */
 
 /* --- Switchblade Control Register (SBSR) - Write only */
 /* --- bit0: Out Buffer Address (Used to select which output to be muted)*/
@@ -80,23 +80,24 @@
 #define EE_BASE     0x8000u    /**< EEPROM base address */
 
 /* ============================================================================
- * PORT 1 - Front Panel Controls (all inputs, active low)
+ * PORT 1 - Front Panel Controls, Input Monitor (all inputs)
  * ============================================================================ */
-#define KEY_MODE      (1u << 4)
-#define KEY_UP        (1u << 5)
-#define KEY_DOWN      (1u << 6)
-#define KEY_SELECT    (1u << 7)
-#define KEY_PRESSED   1u
-#define KEY_RELEASED  0u
+#define MON_IN_STATE    P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
+#define KEY_MODE        (1u << 4)
+#define KEY_UP          (1u << 5)
+#define KEY_DOWN        (1u << 6)
+#define KEY_SELECT      (1u << 7)
+#define KEY_PRESSED     1u
+#define KEY_RELEASED    0u
 
 /* ============================================================================
  * PORT 3 CONTROL LINES (Bit-addressable I/O)
  * ============================================================================ */
-#define DAC_AB_SELECT   P3_2       /**< Selects DAC channel A/B */
-#define OUT_MUTE        P3_3       /**< Output buffer mute control (Ouput selected by SBSR.0-SBSR.3: 0 = Muted, 1 = All Active) */
+#define DAC_AB_SELECT   P3_2       /**< Selects DAC channel A/B (0 = DAC A, 1 = DAC B) */
+#define OUT_MUTE        P3_3       /**< Output buffer mute control (Output selected by SBSR.0-SBSR.3: 0 = Muted, 1 = All Active) */
 #define MX_WR_ENABLE    P3_4       /**< Matrix Write Enable (active low) */
 #define DAC_WR_ENABLE   P3_5       /**< DAC Write Enable (active high) */
-#define MON_IN_STATE    P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
+
 
 /* ============================================================================
  * EEPROM MEMORY LAYOUT
@@ -109,10 +110,10 @@
 #define REC_LINKS       0x00u    
 /**< [64 byte] 32 x {attenuation (1 byte), routing (1 byte)} */
 /**<              ------------------------------------------------*/
-/**<              | 0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  | */
+/**<              | 7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  | */
 /**<              ------------------------------------------------ */
 /**< 0x00, att:   |     up attenuation   |  down attenuation     | */
-/**<b.            ------------------------------------------------ */
+/**<              ------------------------------------------------ */
 /**< 0x01, route: |     output number    |  input number         | */
 /**<              ------------------------------------------------ */
 
