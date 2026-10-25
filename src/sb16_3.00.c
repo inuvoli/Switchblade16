@@ -80,15 +80,17 @@
 #define EE_BASE     0x8000u    /**< EEPROM base address */
 
 /* ============================================================================
- * PORT 1 - Front Panel Controls, Input Monitor (all inputs)
+ * PORT 1 - Front Panel Controls, Input Monito, Foot pedal
  * ============================================================================ */
-#define MON_IN_STATE    P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
-#define KEY_MODE        (1u << 4)
-#define KEY_UP          (1u << 5)
-#define KEY_DOWN        (1u << 6)
-#define KEY_SELECT      (1u << 7)
-#define KEY_PRESSED     1u
-#define KEY_RELEASED    0u
+#define MON_IN_STATE      P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
+#define FOOT_NEXT_BANK    P1_2       /**< Switch to next bank (active low) */
+#define FOOT_NEXT_PRESET  P1_3       /**< Switch to next prese5 (active low) */    
+#define KEY_MODE          (1u << 4)
+#define KEY_UP            (1u << 5)
+#define KEY_DOWN          (1u << 6)
+#define KEY_SELECT        (1u << 7)
+#define KEY_PRESSED       1u
+#define KEY_RELEASED      0u
 
 /* ============================================================================
  * PORT 3 CONTROL LINES (Bit-addressable I/O)
