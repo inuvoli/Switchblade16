@@ -5,7 +5,7 @@
  * 
  * Author:          Ivan Nuvoli (Nuvoli Custom Audio)
  * Date:            2024-06-15
- * Version:         2.0.1
+ * Version:         3.0.0
  * 
  * Target Hardware: 80C31 (MCS-51 family) @ 12 MHz
  * Compiler:        SDCC (Small Device C Compiler)
@@ -134,7 +134,8 @@
 
 /* Configuration & Global Settings */
 #define CFG_RC          0x1D0Fu  /**< [1 byte]  Relay momentary/continuous mask */
-#define NAMES_BASE      0x1D10u  /**< [256 byte] 32*832 x 8-char I/O names, IN names from 0x1D10u to 0x1D8f, OUT names from 0x1D90u to 0x1E0Fu */
+#define NAMES_BASE      0x1D10u  /**< [256 byte] 32 x 8-char Input and Output names. */
+                                 /**<            IN names from 0x1D10 to 0x1D8f, OUT names from 0x1D90 to 0x1E0F */
 #define CFG_OMC         0x1E10u  /**< [16 byte] Output MIDI channel assignments, one byte for each output device */
 #define CFG_SMC         0x1E20u  /**< [1 byte]  SwitchBlade receive MIDI channel */
 #define CFG_PST         0x1E21u  /**< [1 byte]  Preset switch time, 0ms - 1000ms in 100ms increments [ 0x0 = 0ms, 0xa = 1000 ms] */
