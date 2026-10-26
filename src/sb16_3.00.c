@@ -69,8 +69,8 @@
 #define SBSR        0x1E18u
 
 /* --- DAC Chips (MP7529B, 8-bit multiplying DACs) --- */
-#define DAC_LO      0x3600u    /**< DAC address space for links 0-15 */
-#define DAC_HI      0x2E00u    /**< DAC address space for links 16-31 */
+#define DAC_LO      0x3600u    /**< DAC base address for links 0-15 */
+#define DAC_HI      0x2E00u    /**< DAC base address for links 16-31 */
 
 /* --- Audio Matrix Crosspoint Switches (CD74HC22106, 8x8 matrices) --- */
 #define MX_OUT      0x3A00u    /**< Output matrix bank base address*/
@@ -84,7 +84,7 @@
  * ============================================================================ */
 #define MON_IN_STATE      P1_1       /**< Monitored Input State (0 = below Vref, 1 = above Vref) */
 #define FOOT_NEXT_BANK    P1_2       /**< Switch to next bank (active low) */
-#define FOOT_NEXT_PRESET  P1_3       /**< Switch to next prese5 (active low) */    
+#define FOOT_NEXT_PRESET  P1_3       /**< Switch to next preset (active low) */    
 #define KEY_MODE          (1u << 4)
 #define KEY_UP            (1u << 5)
 #define KEY_DOWN          (1u << 6)
@@ -132,21 +132,21 @@
 #define REC_SWEEPDELAY  0x5Du    /**< [1 byte]  Preset Sweep delay value, from 250ms to 12950ms in 50ms step. */
                                  /**<           [0x01 = 250ms, 0xff = 12950ms] */
 #define REC_SWEEPMODE   0x5Eu    /**< [1 byte]  Sweep mode: 0=off, 1=smooth, 2=multi-pan */
-#define REC_CTRMASK     0x5Fu    /**< [4 byte]  bit mask for CTR1-controlled links (INFERRED)*/
+#define REC_SWEEPMASK   0x5Fu    /**< [4 byte]  bit mask for sweep-controlled links */
 
 /* Configuration & Global Settings */
 #define CFG_RC          0x1D0Fu  /**< [1 byte]  Relay momentary/continuous mask */
-#define NAMES_BASE      0x1D10u  /**< [256 byte] 32 x 8-char Input and Output names. */
+#define CFG_NAME_IO     0x1D10u  /**< [256 byte] 32 x 8-char Input and Output names. */
                                  /**<            IN names from 0x1D10 to 0x1D8f, OUT names from 0x1D90 to 0x1E0F */
 #define CFG_OMC         0x1E10u  /**< [16 byte] Output MIDI channel assignments, one byte for each output device */
 #define CFG_SMC         0x1E20u  /**< [1 byte]  SwitchBlade receive MIDI channel */
 #define CFG_PST         0x1E21u  /**< [1 byte]  Preset switch time, 0ms - 1000ms in 100ms increments [ 0x0 = 0ms, 0xa = 1000 ms] */
-#define CFG_PAD         0x1E22u  /**< [1 byte]  Input 1 pad attenuator, (0x0 = OFF, 0x01 = ON) */
-#define CFG_CC_ON       0x1E23u  /**< [1 byte]  Program Change mode */
-#define CFG_BNK_N       0x1E24u  /**< [1 byte]  Index of last populated bank */
-#define CFG_CTR0        0x1E25u  /**< [1 byte]  Controller 0 CC number */
-#define CFG_CTR1        0x1E26u  /**< [1 byte]  Controller 1 CC number */
-#define CFG_BANKS       0x1E30u  /**< [20 byte??] 20 banks x 10 items */
+#define CFG_IN1_PAD     0x1E22u  /**< [1 byte]  Input 1 pad attenuator, (0x00 = OFF, 0x01 = ON) */
+#define CFG_PM_ON       0x1E23u  /**< [1 byte]  Program Manager Status (0x00 = OFF, 0x01 = ON) */
+#define CFG_LAST_BANK   0x1E24u  /**< [1 byte]  Index of last populated bank (Numbered from 0x00 to 0x13) */
+#define CFG_CC_CTR0     0x1E25u  /**< [1 byte]  Controller 0 CC number */
+#define CFG_CC_CTR1     0x1E26u  /**< [1 byte]  Controller 1 CC number */
+#define CFG_BANKS       0x1E30u  /**< [20 x 10 byte] 20 banks x 10 items (Presets Numbers) */
 
 /* MIDI SysEx Backup Configuration */
 #define BLK_GROUPS      28u
@@ -178,6 +178,9 @@ static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
  * GLOBAL STATE VARIABLES
  * ============================================================================ */
 
+/* Support Global Variables */
+static __xdata uint8_t pagebuf[32];           /**< Temporary Buffer for EEPROM factory reset operations */
+
 /* Front Panel State Variables */
 static __bit key_repeated;                    /**< Key repeat flag for UP and DOWN keys */
 
@@ -191,14 +194,13 @@ static __data uint8_t pad_bit;                /**< Input pad bit mask for SBSR.5
 static __data uint8_t vref_bit;               /**< Vref bit mask for SBSR.4      (0x10 = 2,5V    , 0x00 = 0V)  NOT IMPLEMENTER, ALWAYS ZERO. 2.5V VREF COULD BE USED FOR VUMETER*/
 static __data uint8_t sweep_mode;             /**< Sweep mode */
 static __data uint8_t rc_mask;                /**< Relay configuration mask (bitn = 0 -> S, bitn = 1 -> P)  */
-static __data uint8_t ctr_mask[4];            /**< Link-to-controller mask */
+static __data uint8_t sweep_mask[4];          /**< Current Preset Sweep Mask */
 
 /* Audio Link State (External RAM) */
 static __xdata uint8_t cur_att[32];           /**< Current attenuation per link */
 static __xdata uint8_t cur_route[32];         /**< Current routing per link */
 static __xdata uint8_t cur_dac[32];           /**< Current DAC values per link */
 static __xdata uint8_t tgt_dac[32];           /**< Target DAC values for fading */
-static __xdata uint8_t pagebuf[32];           /**< EEPROM page buffer */
 
 /* Interrupt-Shared Variables (must be volatile) */
 static volatile __data uint8_t pos0;          /**< Sweep position 0 */
@@ -225,8 +227,7 @@ static          __data uint16_t pan_per;      /**< Base period P */
 /* Remote mode: tables share blkbuf (the programming menu is never active
  * at the same time; the ISR only touches them while in_play is set). */
 static __xdata uint8_t blkbuf[BLK_GROUPS * 7];
-#define ed blkbuf /*Non serve ad un cazzo, da togliere */
-#define REM_ATT   (blkbuf)                   /**< Working attenuation per link */
+#define blkbuf   (blkbuf)                   /**< Working attenuation per link */
 #define REM_RT    (blkbuf + 32)              /**< Working route per link */
 #define REM_CC    (blkbuf + 64)              /**< CC number controlling each link (FF = none) */
 #define REM_VAL   (blkbuf + 96)              /**< Last DAC value (CC<<1) per CC number */
@@ -555,9 +556,9 @@ static void dac_write(uint8_t link, uint8_t attn, __bit mute)
 
 /**
  * dac_value - return an interpolated dac attenuation value
- * beetwen two values according to pos value. the two attenuation 
- * values are stored in attn. the upper value on bit4..7, the lower
- * value on the bit 0..3
+ * between high and low attenuation to pos value. the two attenuation 
+ * values are stored in attn. high attenuation in the upper 4 bit and
+ * low attenuation in the lower 4 bit.
  */
 static uint8_t dac_value(uint8_t attn, uint8_t pos)
 {
@@ -569,15 +570,37 @@ static uint8_t dac_value(uint8_t attn, uint8_t pos)
     return hi + (uint8_t)(((uint16_t)(lo - hi) * (uint8_t)~pos) >> 8);
 }
 
-static uint8_t link_pos(uint8_t link, uint8_t route)
+/**
+ * link_masked_pos - return the masked position for the specified link and route
+ * link: The link number.
+ * route: The route number.
+ * Returns the masked position for the link and route based on the sweep mask and mode.
+ */
+static uint8_t link_masked_pos(uint8_t link, uint8_t route)
 {
-    if (!(ctr_mask[link >> 3] & (1u << (link & 7)))) return pos0;
-    return sweep_mode == 2 ? pan_pos[route & 3] : pos1;
+    uint8_t mask_idx = link >> 3;
+    uint8_t bit_mask = 1u << (link & 7);
+
+    if ((sweep_mask[mask_idx] & bit_mask) == 0)
+        return pos0;
+
+    if (sweep_mode == 2)
+        return pan_pos[route & 3];
+
+    return pos1;
 }
 
-static __bit sweeping(uint8_t att)
+/**
+ * sweeping - return whether the specified attenuation value represents a sweeping state
+ * attn: The attenuation value.
+ * Returns 1 if the attenuation is sweeping (high and low values differ), 0 otherwise.
+ */
+static __bit sweeping(uint8_t attn)
 {
-    return att != 0 && (att & 0x0F) != (att >> 4);
+    uint8_t lo = attn & 0x0F;
+    uint8_t hi = attn >> 4;
+
+    return lo != hi;
 }
 
 /**
@@ -607,30 +630,42 @@ static void ramp_dacs(uint8_t ms_per_pass)
 /* ============================================================================
  * RELAY CONTROL
  * ============================================================================ */
-
-static void relays_write(uint8_t v)
+/**
+ * relays_write - Set the state of all relays
+ * state: The state to set the relays to. Each bit represents a relay.
+ *         The least significant bit corresponds to the first relay.
+ *         The state will be rotated for each subsequent relay.
+ */
+static void relays_write(uint8_t state)
 {
     uint8_t i;
     for (i = 0; i < 8; i++)
     {
-        XB(RELAY_BASE + i) = v;
-        v = (v >> 1) | (v << 7);
+        XB(RELAY_BASE + i) = state;
+        state = (state >> 1) | (state << 7);
     }
     relay_pulse = 1;
 }
 
+/**
+ * relays_check_pulse - Check and reset the state of all relays after a pulse
+ * Checks if a relay pulse has occurred and resets the state of all relays accordingly.
+ */
 static void relays_check_pulse(void)
 {
-    uint8_t i, m = rc_mask;
+    uint8_t i;
+    uint8_t mask = rc_mask;
     
     if (!relay_pulse) return;
     
     delay_ms(20);
     relay_pulse = 0;
     
-    for (i = 0; i < 8; i++) {
-        if (m & 1) XB(RELAY_BASE + i) = 0;
-        m = (m >> 1) | (m << 7);
+    for (i = 0; i < 8; i++)
+    {
+        if (mask & 1)
+            XB(RELAY_BASE + i) = 0;
+        mask = mask >> 1;
     }
 }
 
@@ -674,21 +709,21 @@ static void midi_send_program_changes(uint16_t rec)
  * PRESET RECALL ENGINE
  * ============================================================================ */
 
-static void recall_preset(uint8_t n)
+static void recall_preset(uint8_t preset_number)
 {
     uint8_t i;
-    uint16_t rec;
+    uint16_t preset_addr;
     uint32_t route_changed = 0;
     
-    if (n < 1 || n > NUM_PRESETS) return;
+    if (preset_number < 1 || preset_number > NUM_PRESETS) return;
     
-    cur_preset = n;
-    rec = get_preset_addr(n);
+    cur_preset = preset_number;
+    preset_addr = get_preset_addr(preset_number);
     
     TR0 = 0; ET0 = 0;
-    sweep_mode = ee_read(rec + REC_SWEEPMODE);
+    sweep_mode = ee_read(preset_addr + REC_SWEEPMODE);
     for (i = 0; i < 4; i++) {
-        ctr_mask[i] = ee_read(rec + REC_CTRMASK + i);
+        sweep_mask[i] = ee_read(preset_addr + REC_SWEEPMASK + i);
     }
     if (sweep_mode) { pos1 = 0; sweep_up = 1; }
     
@@ -696,28 +731,28 @@ static void recall_preset(uint8_t n)
     {
         uint8_t any = 0;
         for (i = 0; i < 32; i++) {
-            if (sweeping(ee_read(rec + REC_LINKS + 2 * i))) any = 1;
+            if (sweeping(ee_read(preset_addr + REC_LINKS + 2 * i))) any = 1;
         }
         XB(LED_CNT) = any ? 0 : 0xFF;
     }
     
     /* Phase 1: Calculate targets */
     for (i = 0; i < 32; i++) {
-        uint8_t att   = ee_read(rec + REC_LINKS + 2 * i);
-        uint8_t route = ee_read(rec + REC_LINKS + 2 * i + 1);
+        uint8_t att   = ee_read(preset_addr + REC_LINKS + 2 * i);
+        uint8_t route = ee_read(preset_addr + REC_LINKS + 2 * i + 1);
         
         if (cur_att[i] != 0 && (att == 0 || route != cur_route[i])) {
             route_changed |= 1ul << i;
         }
         tgt_dac[i] = (route_changed & (1ul << i)) 
-                     ? 0 : (att ? dac_value(att, link_pos(i, route)) : 0);
+                     ? 0 : (att ? dac_value(att, link_masked_pos(i, route)) : 0);
     }
     ramp_dacs(pst_time ? (uint8_t)(pst_time * 100u / 32u) : 0);
     
     /* Phase 2: Switch crosspoints */
     for (i = 0; i < 32; i++) {
-        uint8_t att   = ee_read(rec + REC_LINKS + 2 * i);
-        uint8_t route = ee_read(rec + REC_LINKS + 2 * i + 1);
+        uint8_t att   = ee_read(preset_addr + REC_LINKS + 2 * i);
+        uint8_t route = ee_read(preset_addr + REC_LINKS + 2 * i + 1);
         uint8_t chg   = (route_changed & (1ul << i)) != 0;
         
         if (chg) link_switch(i, cur_route[i], 0);
@@ -725,23 +760,23 @@ static void recall_preset(uint8_t n)
         
         cur_att[i] = att;
         cur_route[i] = route;
-        tgt_dac[i] = att ? dac_value(att, link_pos(i, route)) : 0;
+        tgt_dac[i] = att ? dac_value(att, link_masked_pos(i, route)) : 0;
     }
     
     /* Phase 3: Fade up */
     ramp_dacs(pst_time ? (uint8_t)(pst_time * 100u / 32u) : 0);
     
-    relays_write(ee_read(rec + REC_RELAY));
-    midi_send_program_changes(rec);
+    relays_write(ee_read(preset_addr + REC_RELAY));
+    midi_send_program_changes(preset_addr);
     
     if (sweep_mode == 1) {
-        sweep_sd = ee_read(rec + REC_SWEEPDELAY);
+        sweep_sd = ee_read(preset_addr + REC_SWEEPDELAY);
         TH0 = ~sweep_sd;
         TL0 = 0xFF;
         TR0 = 1; ET0 = 1;
     } else if (sweep_mode == 2) {
         uint8_t k;
-        sweep_sd = ee_read(rec + REC_SWEEPDELAY);
+        sweep_sd = ee_read(preset_addr + REC_SWEEPDELAY);
         pan_per = (uint16_t)sweep_sd << 8;
         for (k = 0; k < 4; k++) {
             pan_pos[k] = 0;
@@ -764,7 +799,7 @@ static void update_continuous(void)
         uint8_t v;
         if (!sweeping(cur_att[i])) continue;
         
-        v = dac_value(cur_att[i], link_pos(i, cur_route[i]));
+        v = dac_value(cur_att[i], link_masked_pos(i, cur_route[i]));
         if (v == cur_dac[i]) continue;
         
         mon_wait_edge();
@@ -897,88 +932,127 @@ void serial_isr(void) __interrupt(4)
 /* ============================================================================
  * SYSTEM INITIALIZATION
  * ============================================================================ */
-
+/**
+ * clear_matrices_and_dacs - Clear all matrices and DACs to their default state
+ */
 static void clear_matrices_and_dacs(void)
 {
-    uint16_t a;
+    uint16_t addr;
     uint8_t i;
     
-    XB(LED_PRG) = 0xFF; XB(LED_PLAY) = 0; XB(LED_CNT) = 0xFF;
+    XB(LED_PRG) = LED_OFF;
+    XB(LED_PLAY) = LED_ON;
+    XB(LED_CNT) = LED_OFF;
+
     MX_WR_ENABLE = 0;
-    for (a = 0; a < 0x400; a++) XB(MX_OUT + a) = 0;
+    for (addr = 0; addr < 0x200; addr++)
+    {
+        XB(MX_OUT + addr) = 0;
+        XB(MX_IN + addr) = 0;
+    }
     MX_WR_ENABLE = 1;
     
-    for (i = 0; i < 32; i++) {
+    for (i = 0; i < 32; i++)
+    {
         dac_write(i, 0, 0);
         cur_dac[i] = 0; cur_att[i] = 0; cur_route[i] = 0;
     }
-    OUT_MUTE = 1;
+    /*OUT_MUTE = 1;*/
 }
 
+/**
+ * factory_reset - Reset EEPROM to factory defaults
+ */
 static void factory_reset(void)
 {
-    uint8_t p, i;
-    uint16_t a = 0;
-    static const char tail[6] = { 1, 0, 0, 0, 0, 0 };
+    uint8_t preset_number;
+    uint8_t i;
+    uint16_t addr = 0;
     
+    lcd_clear();
     lcd_string_at(0, 0, "FACTORY RESET...    ");
     
-    for (p = 1; p <= NUM_PRESETS; p++) {
+    for (preset_number = 1; preset_number <= NUM_PRESETS; preset_number++)
+    {
+        /* Reset preset Link definition */
         for (i = 0; i < 32; i++) pagebuf[i] = 0;
-        ee_write_data(a, pagebuf, 32);
-        ee_write_data(a + 32, pagebuf, 32);
+        ee_write_data(addr, pagebuf, 32);
+        ee_write_data(addr + 32, pagebuf, 32);
         
+        /* Reset preset relay configuration */
         pagebuf[0] = 0;
-        ee_write_data(a + REC_RELAY, pagebuf, 1);
+        ee_write_data(addr + REC_RELAY, pagebuf, 1);
         
+        /* Reset preset Program Change configuration */
         for (i = 0; i < 16; i++) pagebuf[i] = 0xFF;
-        ee_write_data(a + REC_PC, pagebuf, 16);
+        ee_write_data(addr + REC_PC, pagebuf, 16);
         
-        {
-            static const char nm[] = "NONAMEYET ";
-            for (i = 0; i < 10; i++) pagebuf[i] = nm[i];
-            pagebuf[10] = '0' + p / 10;
-            pagebuf[11] = '0' + p % 10;
-            ee_write_data(a + REC_NAME, pagebuf, 12);
-        }
+        //Reset preset name
+        static const char name[] = "NONAMEYET ";
+        for (i = 0; i < 10; i++) pagebuf[i] = name[i];
+        pagebuf[10] = '0' + preset_number / 10;
+        pagebuf[11] = '0' + preset_number % 10;
+        ee_write_data(addr + REC_NAME, pagebuf, 12);
         
-        for (i = 0; i < 6; i++) pagebuf[i] = tail[i];
-        ee_write_data(a + REC_SWEEPDELAY, pagebuf, 6);
-        a += PRESET_LEN;
+        /* Reset Sweep Delay */
+        pagebuf[0] = 1;
+        ee_write_data(addr + REC_SWEEPDELAY, pagebuf, 1);
+
+        /* Reset Sweep Mode */
+        pagebuf[0] = 0;
+        ee_write_data(addr + REC_SWEEPMODE, pagebuf, 1);
+
+        /* Reset Sweep Mask */
+        for (i = 0; i < 4; i++) pagebuf[i] = 0;
+        ee_write_data(addr + REC_SWEEPMASK, pagebuf, 4);
+        addr += PRESET_LEN;
     }
     
+    /* Reset Input and Output names to all spaces */
     for (i = 0; i < 32; i++) pagebuf[i] = 0x20;
-    for (a = NAMES_BASE; a < NAMES_BASE + 256; a += 32) {
-        ee_write_data(a, pagebuf, 32);
-    }
+    for (addr = CFG_NAME_IO; addr < CFG_NAME_IO + 256; addr += 32)
+        ee_write_data(addr, pagebuf, 32);
     
-    for (i = 0; i < 17; i++) pagebuf[i] = 0xFF;
-    ee_write_data(CFG_OMC, pagebuf, 17);
+    /* Reset Output MIDI Channels */
+    for (i = 0; i < 16; i++) pagebuf[i] = 0xFF;
+    ee_write_data(CFG_OMC, pagebuf, 16);
     
+    /* Reset Banks*/
     for (i = 0; i < 32; i++) pagebuf[i] = 0;
-    for (a = 0x1E30; a < 0x1E30 + 288; a += 32) {
-        ee_write_data(a, pagebuf, 32);
-    }
+    for (addr = CFG_BANKS; addr < CFG_BANKS + 448; addr += 32)
+        ee_write_data(addr, pagebuf, 32);
     
+    /* Reset all global parameters */
     ee_write(CFG_RC, 0);
     ee_write(CFG_SMC, 0);
     ee_write(CFG_PST, 0);
-    ee_write(CFG_PAD, 0);
-    ee_write(CFG_CC_ON, 1);
-    ee_write(0x1E24, 0);
-    ee_write(CFG_CTR0, 7);
-    ee_write(CFG_CTR1, 0);
-    ee_write(0x1E30, 1);
+    ee_write(CFG_IN1_PAD, 0);
+    ee_write(CFG_PM_ON, 1);
+    ee_write(CFG_LAST_BANK, 0);
+    ee_write(CFG_CC_CTR0, 7);
+    ee_write(CFG_CC_CTR1, 0);
+
+    /* Reset Unused Memory*/
+    for (i = 0; i < 32; i++) pagebuf[i] = 0x00;
+    ee_write_data(0x1D01, pagebuf, 14);
+
+    for (i = 0; i < 32; i++) pagebuf[i] = 0xff;
+    ee_write_data(0x1E27, pagebuf, 9);
+    ee_write_data(0x1FF0, pagebuf, 15);
+    ee_write(0x1FFF, 0xFC);
 }
 
-static void load_config(void)
+/**
+ * load_system_config - Load Switchblade global configuration parameters from EEPROM
+ */
+static void load_system_config(void)
 {
     midi_ch  = ee_read(CFG_SMC) & 0x0F;
     pst_time = ee_read(CFG_PST);
-    pad_bit  = ee_read(CFG_PAD) ? 0x20 : 0x00;
+    pad_bit  = ee_read(CFG_IN1_PAD) ? 0x20 : 0x00;
     vref_bit = 0x00; /*NOT USED*/
-    ctr0_cc  = ee_read(CFG_CTR0);
-    ctr1_cc  = ee_read(CFG_CTR1);
+    ctr0_cc  = ee_read(CFG_CC_CTR0);
+    ctr1_cc  = ee_read(CFG_CC_CTR1);
     rc_mask  = ee_read(CFG_RC);
 }
 
@@ -1165,7 +1239,7 @@ static __bit name_blank(uint8_t slot)
 {
     uint8_t i, c;
     for (i = 0; i < 8; i++) {
-        c = ee_read(NAMES_BASE + (uint16_t)slot * 8 + i);
+        c = ee_read(CFG_NAME_IO + (uint16_t)slot * 8 + i);
         if (c != ' ' && c != 0xFF && c != 0) return 0;
     }
     return 1;
@@ -1180,7 +1254,7 @@ static void show_name(uint8_t slot)
         lcd_puts("  ");
     } else {
         for (i = 0; i < 8; i++) {
-            lcd_putc(ee_read(NAMES_BASE + (uint16_t)slot * 8 + i));
+            lcd_putc(ee_read(CFG_NAME_IO + (uint16_t)slot * 8 + i));
         }
     }
 }
@@ -1215,7 +1289,7 @@ static void scr_name(void)
     for (;;) {
         lcd_goto(1, 0);
         for (i = 0; i < 12; i++) {
-            lcd_putc(ed[REC_NAME + i]);
+            lcd_putc(blkbuf[REC_NAME + i]);
         }
         lcd_goto(1, pos);
         
@@ -1224,7 +1298,7 @@ static void scr_name(void)
         if (k == KEY_SELECT) {
             pos = (pos == 11) ? 0 : pos + 1;
         } else {
-            ed[REC_NAME + pos] = char_step(ed[REC_NAME + pos], k);
+            blkbuf[REC_NAME + pos] = char_step(blkbuf[REC_NAME + pos], k);
         }
     }
 }
@@ -1233,7 +1307,7 @@ static uint8_t find_link(uint8_t in, uint8_t out)
 {
     uint8_t i, r = (out << 4) | in;
     for (i = 0; i < 32; i++) {
-        if (ed[2 * i] && ed[2 * i + 1] == r) return i;
+        if (blkbuf[2 * i] && blkbuf[2 * i + 1] == r) return i;
     }
     return 0xFF;
 }
@@ -1242,7 +1316,7 @@ static uint8_t free_link(void)
 {
     uint8_t i;
     for (i = 0; i < 32; i++) {
-        if (ed[2 * i] == 0) return i;
+        if (blkbuf[2 * i] == 0) return i;
     }
     return 0xFF;
 }
@@ -1258,7 +1332,7 @@ static void scr_patch(void)
     lk = find_link(in, out);
     
     for (;;) {
-        a = (lk == 0xFF) ? 0 : ed[2 * lk];
+        a = (lk == 0xFF) ? 0 : blkbuf[2 * lk];
         
         lcd_goto(0, 0);
         show_name(in);
@@ -1272,7 +1346,7 @@ static void scr_patch(void)
         lcd_puts(gain_name[a >> 4]);
         lcd_puts(" C");
         lcd_putc(lk == 0xFF ? '-' : 
-                 ((ed[REC_CTRMASK + (lk >> 3)] >> (lk & 7)) & 1) ? '1' : '0');
+                 ((blkbuf[REC_SWEEPMASK + (lk >> 3)] >> (lk & 7)) & 1) ? '1' : '0');
         
         lcd_goto(f >= 2, fcol[f]);
         
@@ -1291,7 +1365,7 @@ static void scr_patch(void)
             lk = find_link(in, out);
         } else if (f == 4) {
             if (lk != 0xFF) {
-                ed[REC_CTRMASK + (lk >> 3)] ^= (uint8_t)(1u << (lk & 7));
+                blkbuf[REC_SWEEPMASK + (lk >> 3)] ^= (uint8_t)(1u << (lk & 7));
             }
         } else {
             n = (f == 2) ? (a & 15) : (a >> 4);
@@ -1300,8 +1374,8 @@ static void scr_patch(void)
             
             if (a == 0) {
                 if (lk != 0xFF) {
-                    ed[2 * lk] = 0;
-                    ed[2 * lk + 1] = 0;
+                    blkbuf[2 * lk] = 0;
+                    blkbuf[2 * lk + 1] = 0;
                     lk = 0xFF;
                 }
             } else {
@@ -1312,10 +1386,10 @@ static void scr_patch(void)
                         delay_ms(800);
                         continue;
                     }
-                    ed[2 * lk + 1] = (out << 4) | in;
-                    ed[REC_CTRMASK + (lk >> 3)] &= (uint8_t)~(1u << (lk & 7));
+                    blkbuf[2 * lk + 1] = (out << 4) | in;
+                    blkbuf[REC_SWEEPMASK + (lk >> 3)] &= (uint8_t)~(1u << (lk & 7));
                 }
-                ed[2 * lk] = a;
+                blkbuf[2 * lk] = a;
             }
         }
     }
@@ -1338,7 +1412,7 @@ static void scr_midi(void)
     lcd_string_at(1, 0, "PROGRAM CHANGE ->   ");
     
     for (;;) {
-        v = ed[REC_PC + out];
+        v = blkbuf[REC_PC + out];
         
         lcd_goto(0, 12);
         show_name(16 + out);
@@ -1362,9 +1436,9 @@ static void scr_midi(void)
                 out = (k == KEY_UP) ? ((out + 1) & 15) : ((out - 1) & 15);
             } while (ee_read(CFG_OMC + out) & 0x80);
         } else if (k == KEY_UP) {
-            ed[REC_PC + out] = (v & 0x80) ? 0 : (v == 127 ? 0xFF : v + 1);
+            blkbuf[REC_PC + out] = (v & 0x80) ? 0 : (v == 127 ? 0xFF : v + 1);
         } else {
-            ed[REC_PC + out] = (v & 0x80) ? 127 : (v == 0 ? 0xFF : v - 1);
+            blkbuf[REC_PC + out] = (v & 0x80) ? 127 : (v == 0 ? 0xFF : v - 1);
         }
     }
 }
@@ -1404,8 +1478,8 @@ static void scr_sweep(void)
     static __xdata uint8_t f, k, m, sd;
     
     f = 0;
-    m = ed[REC_SWEEPMODE];
-    sd = ed[REC_SWEEPDELAY];
+    m = blkbuf[REC_SWEEPMODE];
+    sd = blkbuf[REC_SWEEPDELAY];
     if (m > 2) m = 0;
     if (sd == 0) sd = 1;
     
@@ -1432,8 +1506,8 @@ static void scr_sweep(void)
         }
     }
     
-    ed[REC_SWEEPMODE] = m;
-    ed[REC_SWEEPDELAY]  = sd;
+    blkbuf[REC_SWEEPMODE] = m;
+    blkbuf[REC_SWEEPDELAY]  = sd;
 }
 
 static void menu_preset(void)
@@ -1442,19 +1516,19 @@ static void menu_preset(void)
     uint8_t i;
     
     for (i = 0; i < PRESET_LEN; i++) {
-        ed[i] = ee_read(rec + i);
+        blkbuf[i] = ee_read(rec + i);
     }
     
     scr_name();
     scr_patch();
     scr_midi();
-    ed[REC_RELAY] = edit_bits(
+    blkbuf[REC_RELAY] = edit_bits(
         "CONTROL  1  2  3  4 ",
         "OUTPUTS  5  6  7  8 ",
-        ed[REC_RELAY], '+', '-', 1
+        blkbuf[REC_RELAY], '+', '-', 1
     );
     scr_sweep();
-    ee_write_data(rec, ed, PRESET_LEN);
+    ee_write_data(rec, blkbuf, PRESET_LEN);
 }
 
 /* ============================================================================
@@ -1500,9 +1574,9 @@ static void scr_copy(void)
         } else {
             lcd_string_at(1, 16, "WAIT");
             for (i = 0; i < PRESET_LEN; i++) {
-                ed[i] = ee_read(get_preset_addr(src) + i);
+                blkbuf[i] = ee_read(get_preset_addr(src) + i);
             }
-            ee_write_data(get_preset_addr(dst), ed, PRESET_LEN);
+            ee_write_data(get_preset_addr(dst), blkbuf, PRESET_LEN);
         }
     }
 }
@@ -1563,7 +1637,7 @@ static void scr_fx(void)
         lcd_goto(1, 0);
         if (slot < 32) {
             for (i = 0; i < 8; i++) {
-                lcd_putc(ee_read(NAMES_BASE + (uint16_t)slot * 8 + i));
+                lcd_putc(ee_read(CFG_NAME_IO + (uint16_t)slot * 8 + i));
             }
         } else {
             lcd_puts("        ");
@@ -1595,8 +1669,8 @@ static void scr_fx(void)
                 ee_write(slot == 32 ? CFG_SMC : CFG_OMC + slot - 16, nv);
             }
         } else {
-            ee_write(NAMES_BASE + (uint16_t)slot * 8 + (f - 2),
-                          char_step(ee_read(NAMES_BASE + (uint16_t)slot * 8 + (f - 2)), k));
+            ee_write(CFG_NAME_IO + (uint16_t)slot * 8 + (f - 2),
+                          char_step(ee_read(CFG_NAME_IO + (uint16_t)slot * 8 + (f - 2)), k));
         }
     }
 }
@@ -1772,7 +1846,7 @@ static void scr_ctr(void)
     lcd_string_at(1, 0, "CONTROL CHANGE #    ");
     
     for (;;) {
-        v = ee_read(which ? CFG_CTR1 : CFG_CTR0);
+        v = ee_read(which ? CFG_CC_CTR1 : CFG_CC_CTR0);
         
         lcd_goto(0, 19);
         lcd_putc('0' + which);
@@ -1795,14 +1869,14 @@ static void scr_ctr(void)
             } else {
                 v = (v & 0x80) ? 127 : (v == 0 ? (which ? 0x80 : 127) : v - 1);
             }
-            ee_write(which ? CFG_CTR1 : CFG_CTR0, v);
+            ee_write(which ? CFG_CC_CTR1 : CFG_CC_CTR0, v);
         }
     }
 }
 
 static void scr_pad(void)
 {
-    uint8_t on = ee_read(CFG_PAD) ? 1 : 0, k;
+    uint8_t on = ee_read(CFG_IN1_PAD) ? 1 : 0, k;
     
     lcd_string_at(0, 0, "INPUT 1 PREAMP->    ");
     lcd_string_at(1, 0, "                    ");
@@ -1819,7 +1893,7 @@ static void scr_pad(void)
         on ^= 1;
         pad_bit = on ? 0x20 : 0;
         XB(SBSR) = pad_bit;
-        ee_write(CFG_PAD, on);
+        ee_write(CFG_IN1_PAD, on);
     }
 }
 
@@ -1881,8 +1955,8 @@ static void scr_bank(void)
     static __xdata uint8_t mode, nb, bank, item, f, k, v, i;
     static const uint8_t col[3] = { 6, 14, 19 };
     
-    mode = ee_read(CFG_CC_ON) & 1;
-    nb = ee_read(CFG_BNK_N);
+    mode = ee_read(CFG_PM_ON) & 1;
+    nb = ee_read(CFG_LAST_BANK);
     bank = 0;
     item = 0;
     f = 0;
@@ -1958,7 +2032,7 @@ static void scr_bank(void)
                 ee_write(CFG_BANKS + (uint16_t)bank * 10 + item, v + 1);
                 if (bank == nb + 1 && item == 0 && v == 0) {
                     nb++;
-                    ee_write(CFG_BNK_N, nb);
+                    ee_write(CFG_LAST_BANK, nb);
                 }
             }
         } else if (v > 1) {
@@ -1969,11 +2043,11 @@ static void scr_bank(void)
             } else if (bank == nb && bank != 0) {
                 ee_write(CFG_BANKS + (uint16_t)bank * 10, 0);
                 nb--;
-                ee_write(CFG_BNK_N, nb);
+                ee_write(CFG_LAST_BANK, nb);
             }
         }
     }
-    ee_write(CFG_CC_ON, mode);
+    ee_write(CFG_PM_ON, mode);
 }
 
 /* ============================================================================
@@ -2020,16 +2094,16 @@ static void rem_commit(void)
     uint32_t chg = 0;
     
     for (i = 0; i < 32; i++) {
-        if (cur_att[i] != 0 && (REM_ATT[i] == 0 || REM_RT[i] != cur_route[i]))
+        if (cur_att[i] != 0 && (blkbuf[i] == 0 || REM_RT[i] != cur_route[i]))
             chg |= 1ul << i;
         tgt_dac[i] = 0;
-        if (REM_ATT[i] && !(chg & (1ul << i)))
+        if (blkbuf[i] && !(chg & (1ul << i)))
             tgt_dac[i] = REM_CC[i] < 32 ? REM_VAL[REM_CC[i]] : 0xFF;
     }
     ramp_dacs(pst_time ? (uint8_t)(pst_time * 100u / 32u) : 0);
     
     for (i = 0; i < 32; i++) {
-        uint8_t att = REM_ATT[i], rt = REM_RT[i];
+        uint8_t att = blkbuf[i], rt = REM_RT[i];
         uint8_t c = (chg & (1ul << i)) != 0;
         
         if (c) link_switch(i, cur_route[i], 0);
@@ -2047,9 +2121,9 @@ static void rem_sysex_apply(void)
     uint8_t i;
     
     clear_matrices_and_dacs();
-    for (i = 0; i < 32; i++) REM_ATT[i] = 0;
+    for (i = 0; i < 32; i++) blkbuf[i] = 0;
     for (i = 0; i < sx_cnt; i++) {
-        REM_ATT[i] = 0xFF;
+        blkbuf[i] = 0xFF;
         REM_RT[i]  = SX_BUF[i * 2];
         REM_CC[i]  = SX_BUF[i * 2 + 1];
     }
@@ -2080,7 +2154,7 @@ static __bit rem_note_handle(uint8_t n)
     if (n < 0x30) {
         switch (n) {
             case 0x24:
-                for (i = 0; i < 32; i++) REM_ATT[i] = 0;
+                for (i = 0; i < 32; i++) blkbuf[i] = 0;
                 rem_st = 1; lcd_string_at(1, 0, "CLEAR PENDING       "); break;
             case 0x26: rem_st = 2; lcd_string_at(1, 0, "INVERTERS ON        "); break;
             case 0x28: rem_st = 3; lcd_string_at(1, 0, "INVERTERS OFF       "); break;
@@ -2114,7 +2188,7 @@ static __bit rem_note_handle(uint8_t n)
                 else {
                     rem_st = 0;
                     for (i = 0; i < 32; i++)
-                        if (REM_ATT[i] && REM_RT[i] == rem_tmp) { REM_ATT[i] = 0; break; }
+                        if (blkbuf[i] && REM_RT[i] == rem_tmp) { blkbuf[i] = 0; break; }
                 }
             }
             break;
@@ -2123,11 +2197,11 @@ static __bit rem_note_handle(uint8_t n)
             rem_show(v);
             f = 0xFF;
             for (i = 0; i < 32; i++)
-                if (REM_ATT[i] && REM_RT[i] == rem_tmp) { f = i; break; }
+                if (blkbuf[i] && REM_RT[i] == rem_tmp) { f = i; break; }
             if (f == 0xFF)
                 for (i = 0; i < 32; i++)
-                    if (!REM_ATT[i]) { f = i; break; }
-            if (f != 0xFF) { REM_ATT[f] = 0xFF; REM_RT[f] = rem_tmp; REM_CC[f] = v; }
+                    if (!blkbuf[i]) { f = i; break; }
+            if (f != 0xFF) { blkbuf[f] = 0xFF; REM_RT[f] = rem_tmp; REM_CC[f] = v; }
             break;
     }
     return 0;
@@ -2141,7 +2215,7 @@ static void remote_mode(void)
     sweep_mode = 0;
     rem_st = 0; rem_mask = 0;
     for (i = 0; i < 32; i++) {
-        REM_ATT[i] = cur_att[i];
+        blkbuf[i] = cur_att[i];
         REM_RT[i]  = cur_route[i];
         REM_CC[i]  = 0xFF;
         REM_VAL[i] = 0xFF;
@@ -2183,7 +2257,7 @@ static void run_programming(void)
     TR0 = 0; ET0 = 0;
     programming_menu();
     XB(LED_PRG) = 0xFF;
-    load_config();
+    load_system_config();
     pc_pending = 0;
     recall_preset(cur_preset);
     lcd_status();
@@ -2209,7 +2283,7 @@ void main(void)
     if (read_buttons() & (KEY_MODE | KEY_DOWN))
         self_test();/*Never returns*/
 
-    load_config();
+    load_system_config();
 
     /* Display startup message */
     lcd_goto(0, 0);
