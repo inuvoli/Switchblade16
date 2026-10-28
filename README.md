@@ -109,17 +109,18 @@ This repository documents the firmware extracted from a **Firmware_SB16_1.51.bin
 
 ### EEPROM Layout
 
-| Address Range | Content |
-|---------------|---------|
-| 0x8000–0x9CEF | 75 presets × 99 bytes |
-| 0x9D0F | Relay configuration (pulse/steady) |
-| 0x9D10–0x9E0F | 32 I/O names × 8 chars |
-| 0x9E10–0x9E1F | Per-output MIDI channels |
-| 0x9E20 | SwitchBlade MIDI channel |
-| 0x9E21 | Preset switch time (crossfade) |
-| 0x9E25/0x9E26 | CTR0 / CTR1 CC numbers |
-| 0x9E30+ | Banks Configuration (20 banks with max 10 Presets each) |
+> **📄 For complete details, see the [EEPROM Memory Layout](docs/EEPROM.md) documentation.**
 
+| Address Range | Content | Reference |
+|---------------|---------|-----------|
+| 0x8000–0x9CEF | 75 presets × 99 bytes | [Preset Structure](#preset-structure) |
+| 0x9D0F | Relay configuration (pulse/steady) | [EEPROM.md](docs/EEPROM.md#relay-configuration-mask) |
+| 0x9D10–0x9E0F | 32 I/O names × 8 chars | [EEPROM.md](docs/EEPROM.md#io-names) |
+| 0x9E10–0x9E1F | Per-output MIDI channels | [EEPROM.md](docs/EEPROM.md#output-midi-channels) |
+| 0x9E20 | SwitchBlade MIDI channel | [EEPROM.md](docs/EEPROM.md#device-settings) |
+| 0x9E21 | Preset switch time (crossfade) | [EEPROM.md](docs/EEPROM.md#device-settings) |
+| 0x9E25/0x9E26 | CTR0 / CTR1 CC numbers | [EEPROM.md](docs/EEPROM.md#device-settings) |
+| 0x9E30+ | Banks Configuration (20 banks × 10 presets) | [EEPROM.md](docs/EEPROM.md#banks-configuration) |
 ---
 
 ## MIDI Implementation

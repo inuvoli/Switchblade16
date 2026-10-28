@@ -658,7 +658,7 @@ static void relays_check_pulse(void)
     
     if (!relay_pulse) return;
     
-    delay_ms(20);
+    delay_ms(20); /* Wait for relay pulse to settle -- TODO it seems too short, may need adjustment */
     relay_pulse = 0;
     
     for (i = 0; i < 8; i++)
