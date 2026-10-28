@@ -19,7 +19,7 @@ This document provides a detailed description of the EEPROM memory organization 
 
 | Address Range | Offset from Base | Content | Size |
 |---------------|------------------|---------|------|
-| 0x8000 – 0x9CEF | 0x0000 – 0x1CEF | 75 User Presets | 7425 bytes |
+| 0x8000 – 0x9D00 | 0x0000 – 0x1D00 | 75 User Presets | 7425 bytes |
 | 0x9D0F | 0x1D0F | Relay Configuration (RC) | 1 byte |
 | 0x9D10 – 0x9E0F | 0x1D10 – 0x1E0F | I/O Names (32 × 8 chars) | 256 bytes |
 | 0x9E10 – 0x9E1F | 0x1E10 – 0x1E1F | Output MIDI Channels (OMC) | 16 bytes |
@@ -38,7 +38,7 @@ This document provides a detailed description of the EEPROM memory organization 
 
 ---
 
-## Preset Memory Region (0x8000 – 0x9CEF)
+## Preset Memory Region (0x8000 – 0x9D00)
 
 ### Preset Allocation
 
@@ -54,7 +54,7 @@ Preset Address = 0x8000 + (preset_number - 1) × 99
 | 2 | 0x8063 | 0x80C5 |
 | 3 | 0x80C6 | 0x8128 |
 | … | … | … |
-| 75 | 0x9CAF | 0x9CEF |
+| 75 | 0x9C9E | 0x9D00 |
 
 ### Preset Structure (99 bytes)
 
@@ -408,8 +408,6 @@ uint8_t dac_value = gain_table[start_level];
 ## Related Documentation
 
 - [README.md](README.md) — Main project documentation
-- [MIDI Implementation](#midi-implementation) — MIDI message specifications
-- [Gain Engine](#gain-engine) — Morphing algorithm details
 
 ---
 
