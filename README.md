@@ -264,6 +264,7 @@ Switchblade16/
 │   └── sb16_3.00.c           # Reconstructed C source
 ├── bin/                      # Compiled output (.bin, .hex)
 ├── build/                    # Intermediate build files
+├── docs/                     # Project documentation
 
 ```
 

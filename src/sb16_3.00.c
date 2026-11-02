@@ -100,6 +100,13 @@
 #define MX_WR_ENABLE    P3_4       /**< Matrix Write Enable (active low) */
 #define DAC_WR_ENABLE   P3_5       /**< DAC Write Enable (active high) */
 
+/* ============================================================================
+ * DIAGNOSTICS MACROS AND DEFINITIONS
+ * ============================================================================ */
+#define XRAM_BASE       0x7E00u
+#define XRAM_SIZE       512u
+#define PATTERN_BASE    0x55u
+#define PATTERN_MARKER  0xAAu
 
 /* ============================================================================
  * EEPROM MEMORY LAYOUT
@@ -180,9 +187,7 @@ static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
 
 /* Support Global Variables */
 static __xdata uint8_t pagebuf[32];           /**< Temporary Buffer for EEPROM factory reset operations */
-
-/* Front Panel State Variables */
-static __bit key_repeated;                    /**< Key repeat flag for UP and DOWN keys */
+static __bit           key_repeated;          /**< Key repeat flag for UP and DOWN keys */
 
 /* Current Preset State (Internal RAM for fast access) */
 static __data uint8_t cur_preset;             /**< Currently active preset (1-75) */
@@ -203,8 +208,8 @@ static __xdata uint8_t cur_dac[32];           /**< Current DAC values per link *
 static __xdata uint8_t tgt_dac[32];           /**< Target DAC values for fading */
 
 /* Interrupt-Shared Variables (must be volatile) */
-static volatile __data uint8_t pos0;          /**< Sweep position 0 */
-static volatile __data uint8_t pos1;          /**< Sweep position 1 */
+static volatile __data uint8_t pos0;          /**< Sweep position 0: Updated by MIDI command 0xD0 (Pitch Bend), 0xE0 (Pitch Bend) and CC#1 (Control Change) */
+static volatile __data uint8_t pos1;          /**< Sweep position 1: Updated by MIDI CC#2 (Control Change) in Sweep Mode 0 and by a Triangle LFO in Sweep Mode 1 */
 static volatile __data uint8_t pc_value;      /**< MIDI Pending PC value */
 static volatile __data uint8_t sweep_sd;      /**< Sweep timer reload */
 static volatile __bit  pc_pending;            /**< MIDI PC pending flag */
@@ -216,12 +221,12 @@ static          __data uint8_t m_status;      /**< MIDI status byte */
 static          __data uint8_t m_d1;          /**< MIDI first data byte */
 
 /* Multi-pan (sweep mode 2): four independent triangle LFOs, channel = route & 3 */
-static volatile __data uint8_t  pan_pos[4];   /**< Pan positions */
+static volatile __data uint8_t  pan_pos[4];   /**< Pan positions for the four different Triangle LFOs in Sweep Mode 2 */
 static volatile __data uint8_t  pan_dir;      /**< Direction bits, 1 = rising */
 static volatile __data uint8_t  pan_exp;      /**< Channels whose period expired  */
 static volatile __data uint16_t pan_cnt[4];   /**< Remaining ticks per channel */
 static volatile __data uint16_t pan_last;     /**< Last programmed interval */
-static          __data uint16_t pan_per;      /**< Base period P */
+static          __data uint16_t pan_per;      /**< Base period */
 
 /* Programming Mode Buffer */
 /* Remote mode: tables share blkbuf (the programming menu is never active
@@ -263,11 +268,7 @@ static void delay_ms(uint16_t ms)
 {
     while (ms--)
     {
-        uint8_t i;
-        for (i = 0; i < 100; i++)
-        {
-            delay_us10(1);
-        }
+        delay_us10(70);  /* 1 ms delay at 10 us units taking into account loop overhead */
     }
 }
 
@@ -275,11 +276,21 @@ static void delay_ms(uint16_t ms)
  * EEPROM ACCESS FUNCTIONS
  * ============================================================================ */
 
+/**
+ * ee_read - Read data from EEPROM
+ * offset: EEPROM offset to read from
+ * Returns the byte read from the specified EEPROM offset.
+ */ 
 static uint8_t ee_read(uint16_t offset)
 {
     return XB(EE_BASE + offset);
 }
 
+/**
+ * ee_write - Write data to EEPROM
+ * offset: EEPROM offset to write to
+ * data: Byte to write to the specified EEPROM offset.
+ */ 
 static void ee_write(uint16_t offset, uint8_t data)
 {
 	XB(EE_BASE + offset) = data;
@@ -287,8 +298,11 @@ static void ee_write(uint16_t offset, uint8_t data)
 
 /**
  * ee_write_data - Write data to EEPROM with page-aware handling
+ * offset: EEPROM offset to write to
+ * src: Pointer to the source data to write
+ * length: Number of bytes to write
  * EEPROM writes must respect 32-byte page boundaries.
- */
+ */ 
 static void ee_write_data(uint16_t offset, const uint8_t *src, uint8_t length)
 {
     while (length)
@@ -313,6 +327,11 @@ static void ee_write_data(uint16_t offset, const uint8_t *src, uint8_t length)
     }
 }
 
+/**
+ * get_preset_addr - Get the EEPROM address of a preset
+ * preset: Preset number (from 1 to 75)
+ * Returns the EEPROM address corresponding to the specified preset.
+ */ 
 static uint16_t get_preset_addr(uint8_t preset)
 {
     return (uint16_t)(preset - 1u) * PRESET_LEN;
@@ -436,9 +455,11 @@ static void lcd_status(void)
  * AUDIO MATRIX ENGINE
  * ============================================================================ */
 
- /**
- * mon_input_select - Select which input signal is compared to Vref, selected from SBSR.4 bit
- */
+/**
+ * mon_input_select - Select which input signal is compared to Vref, 
+ *                    selected from SBSR.4 bit
+ * in: Input number to select (0-15)
+ */ 
 static void mon_input_select(uint8_t in)
 {
     /* Set lower 3 bit*/
@@ -455,7 +476,7 @@ static void mon_input_select(uint8_t in)
     }
 }
 
-/**
+ /**
  * mon_wait_edge - Wait for audio signal to cross Vref value set by SBSR.4
  * or for timeout. Prevents clicks by switching at low signal levels.
  */
@@ -591,11 +612,12 @@ static uint8_t link_masked_pos(uint8_t link, uint8_t route)
 }
 
 /**
- * sweeping - return whether the specified attenuation value represents a sweeping state
- * attn: The attenuation value.
+ * is_sweeping - return whether the specified attenuation value represents a sweeping state
+ *               cosidering that a sweeping state occurs when the high and low attenuation values differ.
+ * attn: The attenuation field from the link definition.
  * Returns 1 if the attenuation is sweeping (high and low values differ), 0 otherwise.
  */
-static __bit sweeping(uint8_t attn)
+static __bit is_sweeping(uint8_t attn)
 {
     uint8_t lo = attn & 0x0F;
     uint8_t hi = attn >> 4;
@@ -603,29 +625,76 @@ static __bit sweeping(uint8_t attn)
     return lo != hi;
 }
 
+
 /**
- * ramp_dacs - Fade all DACs toward target values
+ * ramp_dacs - Gradually adjust all DACs toward their target values
+ *             in increment step of 8 units.
+ * ms_per_pass: Milliseconds to wait per ramping pass
  */
 static void ramp_dacs(uint8_t ms_per_pass)
 {
-    uint8_t i, busy;
+    uint8_t i;
+    uint8_t current_dac;
+    uint8_t target_dac;
+    uint8_t done;
     
-    do {
-        busy = 0;
-        for (i = 0; i < 32; i++) {
-            uint8_t c = cur_dac[i], t = tgt_dac[i];
-            if (c == t) continue;
+    done = 0;
+    while(!done)
+    {
+        done = 1; /* Assume all DACs are done, will be cleared if any need adjustment */
+        for (i = 0; i < 32; i++)
+        {
+            current_dac = cur_dac[i];
+            target_dac = tgt_dac[i];
+            if (current_dac == target_dac) continue;
             
-            if (c < t) c = (t - c > 8) ? c + 8 : t;
-            else       c = (c - t > 8) ? c - 8 : t;
+            if (current_dac < target_dac)
+                current_dac = (target_dac - current_dac > 8) ? current_dac + 8 : target_dac;
+            else
+                current_dac = (current_dac - target_dac > 8) ? current_dac - 8 : target_dac;
             
-            dac_write(i, c, 0);
-            cur_dac[i] = c;
-            busy = 1;
+            done = 0; /* At least one DAC needs adjustment */
+            dac_write(i, current_dac, 0);
+            cur_dac[i] = current_dac;
         }
-        if (busy && ms_per_pass) delay_ms(ms_per_pass);
-    } while (busy);
+
+        /* Wait for the specified time before the next ramping pass */
+        if (ms_per_pass)
+            delay_ms(ms_per_pass);
+    }
 }
+
+/**
+ * matrix_and_dacs_init - Clear all matrices and DACs to their default state
+ * 
+ * This function clears the matrix outputs and inputs, also sets all DACs to zero.
+ * It also resets the current DAC, attenuation, and route
+ * values to their default state.
+ */
+static void matrix_and_dacs_init(void)
+{
+    uint16_t addr;
+    uint8_t i;
+      
+    MX_WR_ENABLE = 0;
+    for (addr = 0; addr < 0x200; addr++)
+    {
+        XB(MX_OUT + addr) = 0;
+        XB(MX_IN + addr) = 0;
+    }
+    MX_WR_ENABLE = 1;
+    
+    for (i = 0; i < 32; i++)
+    {
+        dac_write(i, 0, 0);
+        cur_dac[i] = 0;
+        cur_att[i] = 0;
+        cur_route[i] = 0;
+    }
+
+    OUT_MUTE = 1; /* Unmute all outputs */
+}
+
 
 /* ============================================================================
  * RELAY CONTROL
@@ -672,36 +741,55 @@ static void relays_check_pulse(void)
 /* ============================================================================
  * MIDI OUTPUT
  * ============================================================================ */
-static void midi_tx(uint8_t b)
+/**
+ * midi_tx - Transmit a single MIDI byte
+ * data: The MIDI byte to transmit
+ *
+ * This function sends a single MIDI byte over the serial interface.
+ * It waits for the transmit buffer to be ready before sending the byte.
+ */
+ static void midi_tx(uint8_t data)
 {
-    uint8_t t = 90;
-    while (!TI && --t);
+    uint8_t timeout = 90;
+    while (!TI && --timeout);
     TI = 0;
-    SBUF = b;
+    SBUF = data;
 }
 
-static void midi_send_program_changes(uint16_t rec)
+/**
+ * midi_send_program_changes - Send MIDI program change messages for a given preset
+ * addr: The preset address containing the program change data to be sent
+ *
+ * This function sends MIDI program change messages for all 16 channels
+ * based on the configuration stored in the EEPROM for the specific Preset.
+ * It disables the serial interrupt during transmission and waits for the 
+ * transmit buffer to be ready before sending each byte.
+ */
+static void midi_send_program_changes(uint16_t addr)
 {
     uint8_t n;
+    uint8_t ch, pc;
+    uint8_t timeout;
     
     ES = 0;
     TI = 1;
     
-    for (n = 0; n < 16; n++) {
-        uint8_t ch = ee_read(CFG_OMC + n);
-        uint8_t pc = ee_read(rec + REC_PC + n);
+    for (n = 0; n < 16; n++)
+    {
+        ch = ee_read(CFG_OMC + n);
+        pc = ee_read(addr + REC_PC + n);
         
-        if (!(ch & 0x80) && !(pc & 0x80)) {
-            midi_tx(0xC0 | ch);
+        /* Only send program change if channel is valid and program number is within range */
+        if (ch != 0xff && pc <= 127)
+        {
+            midi_tx(0xC0 | (ch & 0x0f));
             midi_tx(pc);
         }
     }
-    
-    {
-        uint8_t t = 90;
-        while (!TI && --t);
-        TI = 0;
-    }
+
+    timeout = 90;
+    while (!TI && --timeout);
+    TI = 0;
     ES = 1;
 }
 
@@ -731,7 +819,7 @@ static void recall_preset(uint8_t preset_number)
     {
         uint8_t any = 0;
         for (i = 0; i < 32; i++) {
-            if (sweeping(ee_read(preset_addr + REC_LINKS + 2 * i))) any = 1;
+            if (is_sweeping(ee_read(preset_addr + REC_LINKS + 2 * i))) any = 1;
         }
         XB(LED_CNT) = any ? 0 : 0xFF;
     }
@@ -797,7 +885,7 @@ static void update_continuous(void)
     uint8_t i;
     for (i = 0; i < 32; i++) {
         uint8_t v;
-        if (!sweeping(cur_att[i])) continue;
+        if (!is_sweeping(cur_att[i])) continue;
         
         v = dac_value(cur_att[i], link_masked_pos(i, cur_route[i]));
         if (v == cur_dac[i]) continue;
@@ -933,34 +1021,6 @@ void serial_isr(void) __interrupt(4)
  * SYSTEM INITIALIZATION
  * ============================================================================ */
 /**
- * clear_matrices_and_dacs - Clear all matrices and DACs to their default state
- */
-static void clear_matrices_and_dacs(void)
-{
-    uint16_t addr;
-    uint8_t i;
-    
-    XB(LED_PRG) = LED_OFF;
-    XB(LED_PLAY) = LED_ON;
-    XB(LED_CNT) = LED_OFF;
-
-    MX_WR_ENABLE = 0;
-    for (addr = 0; addr < 0x200; addr++)
-    {
-        XB(MX_OUT + addr) = 0;
-        XB(MX_IN + addr) = 0;
-    }
-    MX_WR_ENABLE = 1;
-    
-    for (i = 0; i < 32; i++)
-    {
-        dac_write(i, 0, 0);
-        cur_dac[i] = 0; cur_att[i] = 0; cur_route[i] = 0;
-    }
-    /*OUT_MUTE = 1;*/
-}
-
-/**
  * factory_reset - Reset EEPROM to factory defaults
  */
 static void factory_reset(void)
@@ -1056,105 +1116,16 @@ static void load_system_config(void)
     rc_mask  = ee_read(CFG_RC);
 }
 
-static void peripherals_init(void)
+static void uart_and_timers_init(void)
 {
-    TMOD = 0x21;
-    TH1  = 0xFE;
-    PCON = 0x80;
-    SCON = 0x50;
-    TR1  = 1;
-    IP   = 0x10;
-    ES   = 1;
-    EA   = 1;
-}
-
-/* ============================================================================
- * DIAGNOSTIC ROUTINES
- * ============================================================================ */
-
-static void patch_set(uint8_t link, uint8_t n, uint8_t on)
-{
-    MX_WR_ENABLE = 0;
-    XB(MX_IN  + mx_offset(link, n)) = on;
-    XB(MX_OUT + mx_offset(link, n)) = on;
-    MX_WR_ENABLE = 1;
-}
-
-static void self_test(void)
-{
-    uint16_t p, i;
-    uint8_t ok = 1, aborted = 0, in = 0, link, v;
-    
-    mon_input_select(0);
-    XB(SBSR) = 0;
-    
-    /* RAM Test */
-    lcd_string_at(0, 0, "RAM TEST:           ");
-    lcd_string_at(1, 0, "                    ");
-    
-    for (p = 0; p < 512 && ok && !aborted; p++) {
-        for (i = 0; i < 512; i++) {
-            XB(0x7E00u + i) = (i == p) ? 0xAA : 0x55;
-        }
-        for (i = 0; i < 512; i++) {
-            if (XB(0x7E00u + i) != ((i == p) ? 0xAA : 0x55)) {
-                ok = 0; break;
-            }
-        }
-        if (ok && !P1_4) aborted = 1;
-    }
-    
-    if (!aborted) {
-        lcd_string_at(1, 0, ok ? "PASS" : "FAIL");
-        while (P1_4);
-    }
-    
-    /* Patch Test */
-    lcd_string_at(0, 0, "PATCH TEST:         ");
-    lcd_string_at(1, 0, "IN/OUT->     D/A->  ");
-    
-    for (;;) {
-        mon_input_select(in);
-        lcd_goto(1, 8); lcd_num(in + 1);
-        link = 0;
-        
-        for (;;) {
-            lcd_goto(1, 18); lcd_num(link + 1);
-            patch_set(link, in, 1);
-            
-            for (;;) {
-                for (v = 255; v; v--) {
-                    dac_write(link, v, 0);
-                    delay_us10(10);
-                }
-                dac_write(link, 0, 0);
-                
-                if (!P1_6) {
-                    patch_set(link, in, 0);
-                    in = (in + 1) & 15;
-                    goto next_input;
-                }
-                if (!P1_4) goto final_stage;
-                if (!P1_5) break;
-            }
-            
-            patch_set(link, in, 0);
-            if (++link == 32) {
-                link = 0;
-                lcd_goto(1, 8);
-                lcd_num(in + 1);
-            }
-        }
-    next_input:;
-    }
-    
-final_stage:
-    lcd_string_at(0, 0, "HI GAIN & PEAK TEST ");
-    lcd_string_at(1, 0, "                    ");
-    mon_input_select(0);
-    XB(SBSR) = 0x30;
-    dac_write(0, 0xFF, 0);
-    for (;;) ;
+    TMOD = 0x21;    /* Timer0: Mode 1 (16-bit), Timer1: Mode 1 (16-bit) */
+    TH1  = 0xFE;    /* Set Baud rate 31250 (MIDI standard) */
+    PCON = 0x80;    /* SMOD = 1 (double baud rate) */
+    SCON = 0x50;    /* Serial mode 1, 8-bit UART, enable receiver */
+    TR1  = 1;       /* Start Timer1 */
+    IP   = 0x10;    /* Set interrupt priority for serial interrupt */
+    ES   = 1;       /* Enable serial interrupt */
+    EA   = 1;       /* Enable global interrupt */
 }
 
 /* ============================================================================
@@ -1272,6 +1243,149 @@ static uint8_t slot_step(uint8_t base, uint8_t cur, uint8_t k)
         if (all || !name_blank(base + n)) return n;
     }
     return cur;
+}
+
+/* ============================================================================
+ * DIAGNOSTIC ROUTINES
+ * ============================================================================ */
+
+ /* patch_set - Set the state of a patch link (on/off) 
+ * link: The patch link number (0-31)
+ * in: The input number (0-15)
+ * state: 1 to enable the patch, 0 to disable
+ */
+static void patch_set(uint8_t link, uint8_t in, uint8_t state)
+{
+    MX_WR_ENABLE = 0;
+    XB(MX_IN  + mx_offset(link, in)) = state;
+    XB(MX_OUT + mx_offset(link, in)) = state;
+    MX_WR_ENABLE = 1;
+}
+
+/* xram_test_pattern - Return the expected value for a given XRAM location
+ * addr_a: The rolling XRAM address
+ * addr_b: The address to compare against
+ * Returns PATTERN_MARKER (0xAA) if addr_a equals addr_b, otherwise PATTERN_BASE (0x55)
+ */
+static uint8_t xram_test_pattern(uint16_t addr_a, uint16_t addr_b)
+{
+    return (addr_a == addr_b) ? PATTERN_MARKER : PATTERN_BASE;
+}
+
+/* xram_test_pass - Test XRAM by writing and verifying patterns
+ * addr: The address to test
+ * Returns 1 if the test passes, 0 otherwise
+ */
+static uint8_t xram_test_pass(uint16_t addr)
+{
+    uint16_t i;
+
+    for (i = 0; i < XRAM_SIZE; i++)
+        XB(XRAM_BASE + i) = xram_test_pattern(i, addr);
+
+    for (i = 0; i < XRAM_SIZE; i++) {
+        if (XB(XRAM_BASE + i) != xram_test_pattern(i, addr))
+            return 0;
+    }
+    return 1;
+}
+
+/* self_test - Perform a self-test of the system 
+ *             This includes RAM test and patch link test.
+ */
+static void self_test(void)
+{
+    uint16_t addr;
+    uint8_t ok = 1;
+    uint8_t aborted = 0;
+    uint8_t input;
+    uint8_t link;
+    uint8_t dac_value;
+    
+    /* Select input 0 for monitoring and clear status register */
+    mon_input_select(0);
+    XB(SBSR) = 0;
+    
+    /*Set all LEDS*/
+    XB(LED_PLAY) = LED_ON;
+    XB(LED_PRG) = LED_OFF;
+    XB(LED_CNT) = LED_OFF;
+
+    /* RAM Test */
+    lcd_string_at(0, 0, "RAM TEST:           ");
+    lcd_string_at(1, 0, "                    ");
+    
+    /* Test each RAM location by writing a unique pattern and verifying it */
+    for (addr = 0; addr < XRAM_SIZE && ok && !aborted; addr++)
+    {
+        ok = xram_test_pass(addr);
+
+        /* Check if the MODE button is pressed to abort the test */
+        if (read_buttons() & KEY_MODE)
+            aborted = 1;
+    }
+
+    if (!aborted)
+    {
+        lcd_string_at(1, 0, ok ? "PASS" : "FAIL");
+
+        /* Wait for the MODE button to be pressed to continue on the next test */
+        while (!(read_buttons() & KEY_MODE));
+    }
+    
+    /* Patch Test - Verify each patch link */
+    lcd_clear();
+    lcd_string_at(0, 0, "PATCH TEST:         ");
+    lcd_string_at(1, 0, "IN/OUT->     D/A->  ");
+    
+    input = 0;
+    while(1)
+    {
+        mon_input_select(input);
+        lcd_num_at(1, 8, input + 1);
+        link = 0;    
+        while(1)
+        {
+            lcd_num_at(1, 18, link + 1);
+            patch_set(link, input, 1);
+            while(1)
+            {
+                for (dac_value = 255; dac_value > 0 ; dac_value--)
+                {
+                    dac_write(link, dac_value, 0);
+                    delay_us10(10);
+                }
+                dac_write(link, 0, 0);
+                
+                /* Skip to the next input */
+                if (read_buttons() & KEY_DOWN)                  
+                    goto next_input;
+
+                /* Abort link/DAC Checking*/
+                if (read_buttons() & KEY_MODE)
+                    goto final_stage;
+                
+                /* Skip to the next link/DAC*/
+                if (read_buttons() & KEY_UP)
+                    break;
+            }
+            patch_set(link, input, 0);
+            link++;
+            if (link == 32)
+                link = 0;
+        }
+next_input:
+        patch_set(link, input, 0);
+        input++;
+    }
+    
+final_stage:
+    lcd_string_at(0, 0, "HI GAIN & PEAK TEST ");
+    lcd_string_at(1, 0, "                    ");
+    mon_input_select(0);
+    XB(SBSR) = 0x30;
+    dac_write(0, 0xFF, 0);
+    while(1);
 }
 
 /* ============================================================================
@@ -2120,7 +2234,7 @@ static void rem_sysex_apply(void)
 {
     uint8_t i;
     
-    clear_matrices_and_dacs();
+    matrix_and_dacs_init();
     for (i = 0; i < 32; i++) blkbuf[i] = 0;
     for (i = 0; i < sx_cnt; i++) {
         blkbuf[i] = 0xFF;
@@ -2264,6 +2378,34 @@ static void run_programming(void)
     sx_stage = 0; rem_on = 0; rem_note_ev = 0; rem_cc_ev = 0; sx_end = 0;
     in_play = 1;
 }
+/* ============================================================================
+ * TITLE SCREEN & FRONT PANEL TEST FUNCTION
+ * ============================================================================ */
+void title_screen(void)
+{
+    lcd_clear();
+    lcd_string_at(0,0,"SWITCHBLADE 16+     ");
+    lcd_string_at(1,0,"FW 3.00    (10-2026)");
+    delay_ms(1000);
+    lcd_clear();
+}
+
+void test_led(void)
+{
+    XB(LED_PLAY) = LED_OFF;
+    XB(LED_PRG) = LED_OFF;
+    XB(LED_CNT) = LED_OFF;
+
+    XB(LED_PLAY) = LED_ON;
+    delay_ms(500);
+    XB(LED_PLAY) = LED_OFF;
+    XB(LED_PRG) = LED_ON;
+    delay_ms(500);
+    XB(LED_PRG) = LED_OFF;
+    XB(LED_CNT) = LED_ON;
+    delay_ms(500);
+    XB(LED_CNT) = LED_OFF;
+}
 
 /* ============================================================================
  * MAIN FUNCTION
@@ -2273,34 +2415,49 @@ void main(void)
 {
     uint8_t b, held = 0, repeat = 0;
 
-    P1 = 0xFF;
-    XB(LED_PLAY) = LED_ON;
+    /* Initialize port P1 as input with pull-up on all pins except P1.0 */
+    P1 = 0xFE;
+   
+    /*Test all LEDS*/
+    test_led();
 
-    clear_matrices_and_dacs();
+    /* Initialize matrix and DACs */
+    matrix_and_dacs_init();
+
+    /* Initialize LCD */
     lcd_init();
   
     /* Check for special boot modes - SELF TEST */
     if (read_buttons() & (KEY_MODE | KEY_DOWN))
         self_test();/*Never returns*/
 
+    /* Load system configuration from EEPROM */    
     load_system_config();
 
     /* Display startup message */
-    lcd_goto(0, 0);
-    lcd_puts("SWITCHBLADE 16      ");
-    lcd_goto(1, 0);
-    lcd_puts("FW 3.0.0            ");
-    delay_ms(600);
+    title_screen();
 
     /* Initialize state */
     pos0 = 0;
     pos1 = 0;
     sweep_mode = 0;
-    P1_0 = 0;
+    
+    /* Initialize UART and Timers */
+    uart_and_timers_init();
 
-    peripherals_init();
-    XB(LED_PLAY) = 0;
+    /*  Turn ON Play LED */
+    XB(LED_PLAY) = LED_ON;
+
+     /* Temporary Halt here*/
+    while(1)
+    {
+        delay_ms(30);
+    }
+
+    /* Recall initial preset */
     recall_preset(1);
+
+    /* Update LCD with current status */
     lcd_status();
     in_play = 1;
 
