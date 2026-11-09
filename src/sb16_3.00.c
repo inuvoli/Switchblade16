@@ -1125,6 +1125,7 @@ static void uart_and_timers_init(void)
     TR1  = 1;       /* Start Timer1 */
     IP   = 0x10;    /* Set interrupt priority for serial interrupt */
     ES   = 1;       /* Enable serial interrupt */
+	ET0  = 0;       /* Disable Timer0 interrupt */
     EA   = 1;       /* Enable global interrupt */
 }
 
